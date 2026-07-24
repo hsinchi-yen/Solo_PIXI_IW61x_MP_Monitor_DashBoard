@@ -103,6 +103,14 @@ class ProjectContractTests(unittest.TestCase):
         ]:
             self.assertIn(f"CREATE TABLE IF NOT EXISTS {table}", schema)
 
+    def test_desktop_uploader_dependencies_are_installable(self):
+        requirements = (ROOT / "requirements-desktop.txt").read_text(encoding="utf-8")
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+        self.assertIn("PyQt5", requirements)
+        self.assertIn("psycopg2-binary", requirements)
+        self.assertIn("pip install -r requirements-desktop.txt", readme)
+
 
 if __name__ == "__main__":
     unittest.main()

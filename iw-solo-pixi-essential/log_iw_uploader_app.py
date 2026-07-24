@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
@@ -47,10 +46,8 @@ class UploadWorker(QThread):
         self.work_order = work_order or None
 
     def run(self):
-        old_url = os.environ.get("DATABASE_URL")
-        os.environ["DATABASE_URL"] = self.db_url
         try:
-            init_schema()
+            init_schema(self.db_url)
             conn = psycopg2.connect(self.db_url)
             try:
                 report = ingest_paths(self.paths, PostgresRunRepository(conn), self.work_order, source="gui")
@@ -60,11 +57,6 @@ class UploadWorker(QThread):
                 conn.close()
         except Exception as exc:
             self.failed.emit(str(exc))
-        finally:
-            if old_url is None:
-                os.environ.pop("DATABASE_URL", None)
-            else:
-                os.environ["DATABASE_URL"] = old_url
 
 
 class UploaderWindow(QMainWindow):

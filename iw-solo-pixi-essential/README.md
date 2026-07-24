@@ -35,6 +35,7 @@ Launch the standalone uploader after the Docker stack is running:
 
 ```powershell
 cd iw-solo-pixi-essential
+python -m pip install -r requirements-desktop.txt
 python log_iw_uploader_app.py
 ```
 

@@ -10,12 +10,12 @@ DATABASE_URL = os.getenv(
 )
 
 
-def get_connection(timeout: int = 5):
+def get_connection(timeout: int = 5, database_url: str | None = None):
     """Get a new database connection."""
-    return psycopg2.connect(DATABASE_URL, connect_timeout=timeout)
+    return psycopg2.connect(database_url or DATABASE_URL, connect_timeout=timeout)
 
 
-def init_schema():
+def init_schema(database_url: str | None = None):
     """
     Initialize the database schema from schema.sql.
     Idempotent: safe to call on every startup.
@@ -41,7 +41,7 @@ def init_schema():
     with open(schema_path, "r", encoding="utf-8") as f:
         sql = f.read()
 
-    conn = get_connection()
+    conn = get_connection(database_url=database_url)
     try:
         cur = conn.cursor()
         cur.execute(sql)

@@ -42,6 +42,35 @@ Date: 2026-07-24
   - duplicates: 180
   - rejected: 0
 
+## Desktop GUI Uploader Verification
+
+- Application: `log_iw_uploader_app.py`
+- Window title: `IW Solo PIXI Log Uploader`
+- Runtime: Python 3.12, PyQt5 5.15.11, psycopg2-binary 2.9.12.
+- Reproducible dependencies are declared in `requirements-desktop.txt` and the
+  installation command is documented in `README.md`.
+- The GUI `Test Connection` action connected successfully to PostgreSQL on
+  port 5434.
+- A real PyQt event loop and `UploadWorker` processed all 180 files from
+  `rawlogs/5101-260715003/` against a newly created isolated database:
+  - first run: uploaded 180, duplicates 0, rejected 0, warnings 15;
+  - second run: uploaded 0, duplicates 180, rejected 0, warnings 0.
+- The GUI table showed 180 `uploaded` statuses on the first run and 180
+  `duplicate` statuses on the second run.
+- Isolated database verification:
+  - test results: 180;
+  - measurements: 196,661;
+  - data-quality issues: 15;
+  - PASS / FAIL / STOP: 121 / 13 / 46.
+- The production `pixi_test` database remained unchanged at 180 results and
+  196,661 measurements. Both isolated acceptance databases were removed after
+  verification.
+- Acceptance screenshot: `UPLOADER_ACCEPTANCE.png`.
+- A defect found during this verification was fixed: schema initialization now
+  uses the database URL selected in the GUI. Previously, a fresh custom
+  database could receive the upload connection while its schema was
+  incorrectly initialized in the default database.
+
 ## Database Verification
 
 ```text
@@ -139,7 +168,32 @@ Additional browser checks:
 - All 17 charts expose `role="img"` and a descriptive accessible name.
 - Legacy URL `/wifi-analysis.html` redirects to `/?page=wifi`.
 
+## Regression Revalidation
+
+- Full unit suite: 13 / 13 passed.
+- Python compile check: `api`, `ingestion`, `parsers`, uploader, and tests
+  passed `compileall`.
+- Parser dry run: 180 files, 196,661 measurements, no parse errors.
+- Docker Compose configuration validated and the current API image was rebuilt.
+- Post-rebuild services:
+  - API: healthy on port 8003;
+  - Nginx: serving and proxying health on port 8004;
+  - PostgreSQL: healthy on port 5434.
+- Post-rebuild API regression:
+  - health: 200, DB connected, 180 results;
+  - docs: 200;
+  - summary: 119 / 120 PASS, 99.17% yield, 180 attempts;
+  - data quality: 7 unknown-MAC attempts;
+  - local LLM status: connected.
+- Browser regression repeated after the uploader fix:
+  - all ten pages opened;
+  - Blue, Cyber, and Space themes switched correctly;
+  - `2026-07-21` filter returned 84 units and 100% yield;
+  - DB Tweak login returned page 1 / 4 with 50 rows and 180 total records;
+  - 320, 768, 1024, and 1440 pixel widths had no body overflow;
+  - console errors: 0;
+  - page errors: 0.
+
 ## Notes
 
 - IW416 remains out of scope for this release.
-- The workspace root is not a git repository, so no commit was created.
