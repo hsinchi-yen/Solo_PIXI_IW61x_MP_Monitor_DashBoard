@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Data Alignment - IW Solo PIXI</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/styles.css">
+  <script defer src="/static/common.js"></script>
+  <script defer src="/static/ai.js"></script>
+</head>
+<body data-page="alignment">
+  <aside class="sidebar"></aside>
+  <main class="workspace">
+    <header class="topbar"><div><p class="eyebrow">Protected</p><h1>Data Alignment</h1></div></header>
+    <section id="status" class="status"></section>
+    <section class="grid-2">
+      <div class="panel">
+        <div class="panel-head"><h2>Set Alignment Target</h2><span>per work order</span></div>
+        <form id="alignmentForm" class="form-grid">
+          <label>Work order<input name="work_order" value="5101-260715003"></label>
+          <label>Target total<input name="target_total" type="number" min="0" value="180"></label>
+          <button class="button primary" type="submit">Save</button>
+        </form>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>Current Targets</h2><span>DB-backed</span></div>
+        <div id="alignmentTargets" class="table-wrap"></div>
+      </div>
+    </section>
+    <pre id="adminResult" class="codebox"></pre>
+  </main>
+</body>
+</html>

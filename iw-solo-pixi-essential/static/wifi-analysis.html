@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Wi-Fi Analysis - IW Solo PIXI</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/chart-lite.js"></script>
+  <script defer src="/static/common.js"></script>
+  <script defer src="/static/ai.js"></script>
+</head>
+<body data-page="wifi-analysis">
+  <aside class="sidebar"></aside>
+  <main class="workspace">
+    <header class="topbar"><div><p class="eyebrow">Wi-Fi 6 Ready</p><h1>Wi-Fi Metrics</h1></div></header>
+    <section id="status" class="status"></section>
+    <section class="panel"><div class="panel-head"><h2>Standards</h2><span>11b/g/a/n/ac/ax</span></div><canvas id="standardChart" height="130"></canvas></section>
+    <section class="panel"><div class="panel-head"><h2>Top Metrics</h2><span>EVM, power, PER, calibration</span></div><div id="metricTable" class="table-wrap"></div></section>
+  </main>
+</body>
+</html>

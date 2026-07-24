@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fail Analysis - IW Solo PIXI</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/chart-lite.js"></script>
+  <script defer src="/static/common.js"></script>
+  <script defer src="/static/ai.js"></script>
+</head>
+<body data-page="fail-analysis">
+  <aside class="sidebar"></aside>
+  <main class="workspace">
+    <header class="topbar"><div><p class="eyebrow">Failure View</p><h1>Fail And STOP Analysis</h1></div></header>
+    <section class="filters"><select id="workOrderFilter"></select><button class="button" data-refresh>Refresh</button></section>
+    <section id="status" class="status"></section>
+    <section class="grid-2">
+      <div class="panel"><div class="panel-head"><h2>Fail Steps</h2><span>Pareto</span></div><canvas id="failStepChart" height="170"></canvas></div>
+      <div class="panel"><div class="panel-head"><h2>Categories</h2><span>FAIL / STOP split</span></div><canvas id="categoryChart" height="170"></canvas></div>
+    </section>
+    <section class="panel"><div class="panel-head"><h2>Fail / STOP List</h2><span>source traceability</span></div><div id="failList" class="table-wrap"></div></section>
+  </main>
+</body>
+</html>

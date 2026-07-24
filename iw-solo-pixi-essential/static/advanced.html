@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Advanced - IW Solo PIXI</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/styles.css">
+  <script defer src="/static/common.js"></script>
+  <script defer src="/static/ai.js"></script>
+</head>
+<body data-page="advanced">
+  <aside class="sidebar"></aside>
+  <main class="workspace">
+    <header class="topbar"><div><p class="eyebrow">Advanced Analytics</p><h1>Duration And Risk</h1></div></header>
+    <section class="filters"><select id="workOrderFilter"></select><button class="button" data-refresh>Refresh</button></section>
+    <section id="status" class="status"></section>
+    <section class="kpi-grid" id="advancedKpis"></section>
+    <section class="panel"><div class="panel-head"><h2>Retry Risk</h2><span>units with multiple attempts</span></div><div id="advancedRetries" class="table-wrap"></div></section>
+  </main>
+</body>
+</html>

@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>IW Solo PIXI Dashboard</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/chart-lite.js"></script>
+  <script defer src="/static/common.js"></script>
+  <script defer src="/static/ai.js"></script>
+</head>
+<body data-page="overview">
+  <aside class="sidebar"></aside>
+  <main class="workspace">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">IW61x / IW611</p>
+        <h1>Production Test Overview</h1>
+      </div>
+    </header>
+    <section class="filters">
+      <select id="workOrderFilter" aria-label="Work order"></select>
+      <button class="button" data-refresh>Refresh</button>
+    </section>
+    <section id="status" class="status"></section>
+    <section class="kpi-grid" id="kpis"></section>
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Yield Trend</h2>
+        <span>attempt view by test date</span>
+      </div>
+      <canvas id="yieldChart" height="110"></canvas>
+    </section>
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Hourly Test Throughput</h2>
+        <span id="hourlyMeta">rolling 24h · completed tests (PASS+FAIL+STOP)</span>
+      </div>
+      <canvas id="hourlyThroughputChart" height="110"></canvas>
+    </section>
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Yield Semantics</h2>
+        <span>retry behavior is intentionally explicit</span>
+      </div>
+      <div id="yieldViews" class="table-wrap"></div>
+    </section>
+  </main>
+</body>
+</html>

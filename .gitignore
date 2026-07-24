@@ -1,0 +1,25 @@
+# Reference material and raw test-log captures (not part of the shipped project)
+/Ref_Project/
+/rawlogs/
+
+# Local agent/tooling scaffolding (not project source)
+/.agents/
+/.claude/
+/.claude-plugin/
+/.codex/
+/.scratch/
+AGENTS.md
+implement.md
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Environment / secrets
+.env
+*.env.local
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db

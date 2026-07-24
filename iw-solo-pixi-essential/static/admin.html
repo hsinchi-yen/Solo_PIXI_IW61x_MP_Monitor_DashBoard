@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin - IW Solo PIXI</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/styles.css">
+  <script defer src="/static/common.js"></script>
+  <script defer src="/static/ai.js"></script>
+</head>
+<body data-page="admin">
+  <aside class="sidebar"></aside>
+  <main class="workspace">
+    <header class="topbar"><div><p class="eyebrow">Protected</p><h1>DB Tweak — Admin Login</h1></div></header>
+    <section id="status" class="status"></section>
+    <section class="panel">
+      <div class="panel-head"><h2>Login</h2><span>signed expiring token</span></div>
+      <form id="loginForm" class="form-grid">
+        <label>User<input name="username" value="pixi"></label>
+        <label>Password<input name="password" type="password" value="pixipass"></label>
+        <button class="button primary" type="submit">Login</button>
+      </form>
+    </section>
+    <pre id="adminResult" class="codebox"></pre>
+  </main>
+</body>
+</html>

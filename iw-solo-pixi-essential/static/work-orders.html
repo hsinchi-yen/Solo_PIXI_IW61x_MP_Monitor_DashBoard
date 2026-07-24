@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Work Orders - IW Solo PIXI</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/styles.css">
+  <script defer src="/static/common.js"></script>
+  <script defer src="/static/ai.js"></script>
+</head>
+<body data-page="work-orders">
+  <aside class="sidebar"></aside>
+  <main class="workspace">
+    <header class="topbar">
+      <div><p class="eyebrow">Batch View</p><h1>Work Orders And Retries</h1></div>
+    </header>
+    <section id="status" class="status"></section>
+    <section class="panel"><div class="panel-head"><h2>Work Orders</h2><span>attempt totals</span></div><div id="workOrders" class="table-wrap"></div></section>
+    <section class="panel"><div class="panel-head"><h2>Retry Units</h2><span>unknown MAC excluded</span></div><div id="retries" class="table-wrap"></div></section>
+  </main>
+</body>
+</html>
