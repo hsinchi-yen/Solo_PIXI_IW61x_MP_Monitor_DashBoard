@@ -39,13 +39,69 @@ python -m pip install -r requirements-desktop.txt
 python log_iw_uploader_app.py
 ```
 
+Uploader behavior:
+
+- `Browse Folder` searches the selected folder and its subfolders.
+- `Browse Files` accepts one or more IW log `.txt` files directly.
+- Leave Work Order blank to infer it from each log's parent folder, or enter a
+  value to override every selected log.
+- A first upload of the 180-file acceptance dataset can take about two minutes
+  because it writes 196,661 measurements. The progress bar and per-file status
+  remain active while the background upload runs.
+- `Uploaded 0` with duplicate files is reported as a completed upload with no
+  new logs, rather than as a failure.
+
+The browser dashboard's **Management → Log Upload** page has separate controls
+for loose TXT/ZIP files and a complete Work Order folder. Folder selection
+infers the Work Order from the selected root directory and ignores files such
+as `summary.txt` that do not match the IW run filename format. The page shows
+elapsed processing time while the request is active.
+
 ## Port Allocation
 
-| Service | Port |
-|---------|------|
-| Nginx (Host) | 8004 |
-| FastAPI | 8003 |
-| PostgreSQL (Host) | 5434 |
+| Service | Default host port | Override |
+|---------|------------------:|----------|
+| Nginx | 8004 | `IW_WEB_PORT` |
+| FastAPI | 8003 | `IW_API_PORT` |
+| PostgreSQL | 5434 | `IW_DB_PORT` |
+
+## Linux Deployment
+
+Place the project in `/mnt/md127/iw-solo-pixi-essential`, then run:
+
+```bash
+cd /mnt/md127/iw-solo-pixi-essential
+chmod +x system_up.sh
+./system_up.sh
+```
+
+`system_up.sh` builds the images, starts all services, waits for both API and
+Nginx health checks, and prints the resulting URLs. If a preferred host port
+is occupied by another process or Compose project, the script searches the
+next 100 ports and saves the selected values in `.system_up.env`. Existing
+ports already owned by this project are retained on subsequent runs.
+
+To request different starting ports:
+
+```bash
+IW_API_PORT=8103 IW_WEB_PORT=8104 IW_DB_PORT=5534 ./system_up.sh
+```
+
+To inspect conflict resolution without changing the running deployment:
+
+```bash
+SYSTEM_UP_PORT_CHECK_ONLY=1 \
+  IW_API_PORT=8000 IW_WEB_PORT=8001 IW_DB_PORT=5432 ./system_up.sh
+```
+
+Review the deployment:
+
+```bash
+docker compose --project-name iw-solo-pixi-essential \
+  --env-file .env --env-file .system_up.env ps
+source .system_up.env
+curl "http://127.0.0.1:${IW_API_PORT}/health"
+```
 
 ## Acceptance Baseline
 

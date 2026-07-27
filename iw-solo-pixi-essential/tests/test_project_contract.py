@@ -6,17 +6,36 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ProjectContractTests(unittest.TestCase):
-    def test_compose_uses_isolated_ports_and_names(self):
+    def test_compose_uses_configurable_ports_and_project_scoped_names(self):
         compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
 
-        self.assertIn("5434:5432", compose)
-        self.assertIn("8003:8003", compose)
-        self.assertIn("8004:80", compose)
-        self.assertIn("iw-pixi-postgres", compose)
-        self.assertIn("iw-pixi-api", compose)
-        self.assertIn("iw-pixi-nginx", compose)
+        self.assertIn("${IW_DB_PORT:-5434}:5432", compose)
+        self.assertIn("${IW_API_PORT:-8003}:8003", compose)
+        self.assertIn("${IW_WEB_PORT:-8004}:80", compose)
+        self.assertNotIn("container_name:", compose)
+        self.assertIn("@postgres:5432/", compose)
         self.assertNotIn("5433:5432", compose)
         self.assertNotIn("8001:80", compose)
+
+        nginx = (ROOT / "nginx" / "default.conf").read_text(encoding="utf-8")
+        self.assertIn("proxy_pass http://api:8003;", nginx)
+        self.assertNotIn("iw-pixi-api", nginx)
+
+    def test_linux_system_up_script_has_port_conflict_and_health_guards(self):
+        script_path = ROOT / "system_up.sh"
+        self.assertTrue(script_path.exists())
+        script = script_path.read_text(encoding="utf-8")
+
+        self.assertIn("set -Eeuo pipefail", script)
+        self.assertIn("choose_port", script)
+        self.assertIn("IW_API_PORT", script)
+        self.assertIn("IW_WEB_PORT", script)
+        self.assertIn("IW_DB_PORT", script)
+        self.assertIn(".system_up.env", script)
+        self.assertIn("docker compose", script)
+        self.assertIn("nginx -s reload", script)
+        self.assertIn("SYSTEM_UP_PORT_CHECK_ONLY", script)
+        self.assertIn("/health", script)
 
     def test_dashboard_pages_and_shared_assets_exist(self):
         pages = [
@@ -84,6 +103,9 @@ class ProjectContractTests(unittest.TestCase):
         self.assertIn("Raw KPI", html)
         self.assertIn("Yield %", html)
         self.assertIn("/api/upload/", html)
+        self.assertIn('id="iwUploadFolder"', html)
+        self.assertIn("webkitdirectory", html)
+        self.assertIn("webkitRelativePath", html)
 
         chart = ROOT / "static" / "vendor" / "chart.umd.min.js"
         marked = ROOT / "static" / "vendor" / "marked.min.js"

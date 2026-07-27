@@ -1656,22 +1656,28 @@ body::before {
     <h2 class="page-title">IW61x Log Upload</h2>
     <div class="align-info-box">
         Upload IW611 / IW61x IQfact <strong>.txt</strong> logs or a safe
-        <strong>.zip</strong> archive. Work Order may be supplied explicitly;
-        otherwise it is inferred from the uploaded folder or archive structure.
+        <strong>.zip</strong> archive. Work Order is inferred when a folder is
+        selected; enter it explicitly for loose TXT files, or to override a
+        folder / archive.
         Uploads are idempotent by SHA-256 content hash.
     </div>
     <div class="data-table-wrap">
         <h3>Upload Test Logs</h3>
         <form id="iwUploadForm" style="display:grid;gap:14px;max-width:760px">
             <div class="tweak-form-row">
-                <label for="iwUploadWorkOrder">Work Order override (optional)</label>
+                <label for="iwUploadWorkOrder">Work Order (required for loose TXT; optional for folder / ZIP)</label>
                 <input id="iwUploadWorkOrder" name="work_order" type="text"
                     placeholder="5101-260715003" autocomplete="off">
             </div>
             <div class="tweak-form-row">
-                <label for="iwUploadFiles">Log files or ZIP archive</label>
+                <label for="iwUploadFiles">Individual log files or ZIP archive</label>
                 <input id="iwUploadFiles" name="files" type="file"
-                    accept=".txt,.zip,text/plain,application/zip" multiple required>
+                    accept=".txt,.zip,text/plain,application/zip" multiple>
+            </div>
+            <div class="tweak-form-row">
+                <label for="iwUploadFolder">Work Order folder (subfolders included)</label>
+                <input id="iwUploadFolder" name="folder_files" type="file"
+                    accept=".txt,text/plain" webkitdirectory directory multiple>
             </div>
             <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
                 <button class="tweak-btn primary" id="btnIwUpload" type="submit">Upload &amp; Analyze</button>
@@ -3933,29 +3939,44 @@ function initIwUpload() {
     if (!form) return;
     form.addEventListener('submit', async event => {
         event.preventDefault();
-        const files = document.getElementById('iwUploadFiles').files;
+        const looseFiles = Array.from(document.getElementById('iwUploadFiles').files);
+        const folderFiles = Array.from(document.getElementById('iwUploadFolder').files);
+        const files = [...looseFiles, ...folderFiles];
         const status = document.getElementById('iwUploadStatus');
         const button = document.getElementById('btnIwUpload');
         if (!files.length) {
-            status.textContent = 'Choose at least one .txt or .zip file.';
+            status.textContent = 'Choose at least one .txt / .zip file or a Work Order folder.';
             status.style.color = 'var(--red)';
             return;
         }
 
         const body = new FormData();
-        const workOrder = document.getElementById('iwUploadWorkOrder').value.trim();
-        const hasLooseText = Array.from(files).some(file => file.name.toLowerCase().endsWith('.txt'));
+        const workOrderInput = document.getElementById('iwUploadWorkOrder');
+        let workOrder = workOrderInput.value.trim();
+        const folderRoots = new Set(folderFiles.map(file =>
+            String(file.webkitRelativePath || '').split('/')[0]
+        ).filter(Boolean));
+        if (!workOrder && folderRoots.size === 1) {
+            workOrder = Array.from(folderRoots)[0];
+            workOrderInput.value = workOrder;
+        }
+        const hasLooseText = looseFiles.some(file => file.name.toLowerCase().endsWith('.txt'));
         if (hasLooseText && !workOrder) {
             status.textContent = 'Work Order is required when uploading individual .txt files.';
             status.style.color = 'var(--red)';
             return;
         }
-        Array.from(files).forEach(file => body.append('files', file));
+        files.forEach(file => body.append('files', file));
         if (workOrder) body.append('work_order', workOrder);
 
         button.disabled = true;
-        status.textContent = `Uploading ${files.length} file(s)…`;
+        const startedAt = Date.now();
+        status.textContent = `Uploading and processing ${files.length} selected file(s)… 0s`;
         status.style.color = 'var(--text2)';
+        const elapsedTimer = setInterval(() => {
+            const seconds = Math.floor((Date.now() - startedAt) / 1000);
+            status.textContent = `Uploading and processing ${files.length} selected file(s)… ${seconds}s`;
+        }, 1000);
         try {
             const response = await fetch(`${API_BASE}/api/upload/`, { method: 'POST', body });
             const report = await response.json();
@@ -3987,6 +4008,7 @@ function initIwUpload() {
             status.textContent = `Upload failed: ${error.message || error}`;
             status.style.color = 'var(--red)';
         } finally {
+            clearInterval(elapsedTimer);
             button.disabled = false;
         }
     });

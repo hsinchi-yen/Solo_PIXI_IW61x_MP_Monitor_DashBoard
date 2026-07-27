@@ -19,6 +19,7 @@ __pycache__/
 # Environment / secrets
 .env
 *.env.local
+/iw-solo-pixi-essential/.system_up.env
 
 # OS / editor cruft
 .DS_Store

@@ -1,16 +1,50 @@
 from __future__ import annotations
 
+from psycopg2.extras import execute_values
+
 
 class PostgresRunRepository:
+    """
+    PostgreSQL-backed run repository.
+
+    Performance notes
+    -----------------
+    * Pre-fetches ALL known file hashes into a local set on first use.
+      ``has_hash()`` is then an O(1) in-memory check with zero DB round-trips.
+    * Measurements use psycopg2 ``execute_values`` multi-row INSERTs.
+    * Issues also use ``execute_values``.
+    * Commits are driven externally (``ingest_paths`` commits every N files),
+      keeping individual transactions small.
+    """
+
     def __init__(self, conn):
         self.conn = conn
+        self._known_hashes: set[str] | None = None   # lazy-loaded
 
-    def has_hash(self, file_hash: str) -> bool:
+    # ------------------------------------------------------------------
+    # Internal: hash cache
+    # ------------------------------------------------------------------
+    def _ensure_hash_cache(self) -> None:
+        if self._known_hashes is not None:
+            return
         with self.conn.cursor() as cur:
-            cur.execute("SELECT 1 FROM test_results WHERE file_hash = %s", (file_hash,))
-            return cur.fetchone() is not None
+            cur.execute("SELECT file_hash FROM test_results")
+            self._known_hashes = {row[0] for row in cur.fetchall()}
+
+    def preload_hashes(self) -> int:
+        """Eagerly load hash cache and return the count."""
+        self._ensure_hash_cache()
+        return len(self._known_hashes)
+
+    # ------------------------------------------------------------------
+    # RunRepository protocol
+    # ------------------------------------------------------------------
+    def has_hash(self, file_hash: str) -> bool:
+        self._ensure_hash_cache()
+        return file_hash in self._known_hashes
 
     def save(self, parsed, source: str = "api") -> int:
+        self._ensure_hash_cache()
         with self.conn.cursor() as cur:
             cur.execute(
                 """
@@ -52,46 +86,61 @@ class PostgresRunRepository:
             result_id = cur.fetchone()[0]
             self._save_measurements(cur, result_id, parsed.measurements)
             self._save_issues(cur, result_id, parsed.issues)
-            return result_id
 
+        # Track in local cache so repeated calls within same session also dedup
+        self._known_hashes.add(parsed.file_hash)
+        return result_id
+
+    # ------------------------------------------------------------------
+    # Bulk insert helpers
+    # ------------------------------------------------------------------
     def _save_measurements(self, cur, result_id: int, measurements) -> None:
-        for metric in measurements:
-            cur.execute(
-                """
-                INSERT INTO test_measurements (
-                    test_result_id, technology, direction, standard, band,
-                    frequency_mhz, bandwidth, rate, antenna, step_num, step_name,
-                    metric_name, value, unit, limit_low, limit_high, passed
-                )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """,
+        if not measurements:
+            return
+        execute_values(
+            cur,
+            """
+            INSERT INTO test_measurements (
+                test_result_id, technology, direction, standard, band,
+                frequency_mhz, bandwidth, rate, antenna, step_num, step_name,
+                metric_name, value, unit, limit_low, limit_high, passed
+            )
+            VALUES %s
+            """,
+            [
                 (
                     result_id,
-                    metric.technology,
-                    metric.direction,
-                    metric.standard,
-                    metric.band,
-                    metric.frequency_mhz,
-                    metric.bandwidth,
-                    metric.rate,
-                    metric.antenna,
-                    metric.step_num,
-                    metric.step_name,
-                    metric.metric_name,
-                    metric.value,
-                    metric.unit,
-                    metric.limit_low,
-                    metric.limit_high,
-                    metric.passed,
-                ),
-            )
+                    m.technology,
+                    m.direction,
+                    m.standard,
+                    m.band,
+                    m.frequency_mhz,
+                    m.bandwidth,
+                    m.rate,
+                    m.antenna,
+                    m.step_num,
+                    m.step_name,
+                    m.metric_name,
+                    m.value,
+                    m.unit,
+                    m.limit_low,
+                    m.limit_high,
+                    m.passed,
+                )
+                for m in measurements
+            ],
+            page_size=2_000,
+        )
 
     def _save_issues(self, cur, result_id: int, issues) -> None:
-        for issue in issues:
-            cur.execute(
-                """
-                INSERT INTO data_quality_issues (test_result_id, issue_type, description)
-                VALUES (%s, %s, %s)
-                """,
-                (result_id, issue.issue_type, issue.description),
-            )
+        if not issues:
+            return
+        execute_values(
+            cur,
+            """
+            INSERT INTO data_quality_issues (test_result_id, issue_type, description)
+            VALUES %s
+            """,
+            [(result_id, iss.issue_type, iss.description) for iss in issues],
+            page_size=1_000,
+        )

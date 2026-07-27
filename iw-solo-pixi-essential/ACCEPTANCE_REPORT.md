@@ -1,6 +1,6 @@
 # IW Solo PIXI Essential Acceptance Report
 
-Date: 2026-07-24
+Date: 2026-07-27
 
 ## Dataset
 
@@ -42,6 +42,39 @@ Date: 2026-07-24
   - duplicates: 180
   - rejected: 0
 
+## Management Web Log Upload
+
+- Tested through the real single-page Dashboard Log Upload tab with
+  `rawlogs/5101-260715003/`.
+- Source selection:
+  - 181 TXT files selected from the folder;
+  - 180 valid IW run logs accepted;
+  - `summary.txt` ignored;
+  - Work Order inferred as `5101-260715003`.
+- First upload to an isolated PostgreSQL database:
+  - HTTP status: 200;
+  - total / uploaded / duplicates / rejected: 180 / 180 / 0 / 0;
+  - test results: 180;
+  - measurements: 196,661;
+  - PASS / FAIL / STOP: 121 / 13 / 46.
+- Performance:
+  - parser-only baseline: 3.245 seconds;
+  - duplicate Web request without DB inserts: 4.021 seconds;
+  - original first-upload Web request: 73.383 seconds;
+  - optimized first-upload Web request: 22.940 seconds;
+  - improvement: 50.443 seconds, approximately 68.7% faster (3.2×).
+- Root cause: psycopg2 `executemany` still issued effectively one statement per
+  measurement, producing approximately 196,661 measurement INSERT operations.
+  Measurements now use multi-row `execute_values`.
+- UI corrections:
+  - real Work Order folder picker with subfolder support;
+  - automatic Work Order inference from `webkitRelativePath`;
+  - accurate Work Order requirement text for loose TXT files;
+  - elapsed-time status while upload and server-side processing are active.
+- Nginx regression through port 8004 completed in 4.311 seconds for 180 known
+  duplicate logs, with 180 report rows and no console or page errors.
+- Acceptance screenshot: `WEB_UPLOAD_ACCEPTANCE.png`.
+
 ## Desktop GUI Uploader Verification
 
 - Application: `log_iw_uploader_app.py`
@@ -55,6 +88,16 @@ Date: 2026-07-24
   `rawlogs/5101-260715003/` against a newly created isolated database:
   - first run: uploaded 180, duplicates 0, rejected 0, warnings 15;
   - second run: uploaded 0, duplicates 180, rejected 0, warnings 0.
+- Current desktop GUI performance after the shared PostgreSQL batching fix:
+  - first upload: 23.192 seconds;
+  - duplicate upload: 4.270 seconds;
+  - GUI event-loop ticks during first upload: 369 at a 50 ms probe interval;
+  - a second Upload click while the worker was active was ignored;
+  - upload controls were re-enabled after completion.
+- The desktop first-upload time is within 0.252 seconds of the optimized Web
+  upload (23.192 vs 22.940 seconds), so no separate GUI-side throughput
+  bottleneck was found. Both upload paths had shared the former per-measurement
+  PostgreSQL insertion bottleneck and now use the same multi-row insert path.
 - The GUI table showed 180 `uploaded` statuses on the first run and 180
   `duplicate` statuses on the second run.
 - Isolated database verification:
@@ -70,6 +113,16 @@ Date: 2026-07-24
   uses the database URL selected in the GUI. Previously, a fresh custom
   database could receive the upload connection while its schema was
   incorrectly initialized in the default database.
+- Follow-up uploader troubleshooting added:
+  - recursive discovery for Work Order folders below the selected folder;
+  - direct multi-file selection;
+  - per-file progress and table status for long uploads;
+  - protection against starting a second worker while an upload is active;
+  - explicit completion text when every selected file is already a duplicate;
+  - actionable dependency installation messages.
+- A fresh isolated database accepted a real `5101-260715003` PASS log through
+  the revised GUI: 1 result and 1,202 measurements were committed. The
+  temporary debug database was removed after verification.
 
 ## Database Verification
 
@@ -170,7 +223,7 @@ Additional browser checks:
 
 ## Regression Revalidation
 
-- Full unit suite: 13 / 13 passed.
+- Full unit suite: 16 / 16 passed.
 - Python compile check: `api`, `ingestion`, `parsers`, uploader, and tests
   passed `compileall`.
 - Parser dry run: 180 files, 196,661 measurements, no parse errors.
