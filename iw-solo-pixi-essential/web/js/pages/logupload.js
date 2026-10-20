@@ -87,7 +87,7 @@ async function analyze(files) {
     const name = files.length === 1 ? files[0].name : t('lu.nFiles', { n: files.length });
     st.fileLabel = `${name}${t('common.dot')}${(size / 1048576).toFixed(1)} MB`;
     $('#luFileInfo').textContent = st.fileLabel;
-    if (files.some(f => !/\.(zip|txt)$/i.test(f.name))) { setStatus('#luAnalyzeStatus', () => t('lu.notZip'), 'error'); return; }
+    if (files.some(f => !/\.(zip|txt|log)$/i.test(f.name))) { setStatus('#luAnalyzeStatus', () => t('lu.notZip'), 'error'); return; }
     st.busy = true;
     setInputsDisabled(true);
     setStatus('#luAnalyzeStatus', () => t('lu.uploading', { pct: 0 }));

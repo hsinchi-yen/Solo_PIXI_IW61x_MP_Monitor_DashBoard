@@ -76,7 +76,7 @@ def _stored_entries(upload_id):
             zf = zipfile.ZipFile(path)
             handles.append(zf)
             entries.extend(zip_entries(zf))
-        elif name.lower().endswith(".txt"):
+        elif name.lower().endswith((".txt", ".log")):
             # Stored as "0000_<original name>"; the original name carries the run metadata.
             entries.append((name[5:], (lambda p=path: open(p, "rb").read())))
     return entries, handles
@@ -141,10 +141,12 @@ def analyze(upload_id, file_names):
         if parsed.start_time:
             starts.append(parsed.start_time)
     if not hashes and not invalid_items:
-        raise ApiError(400, Msg("No IW611 test logs found. Upload a work-order zip with each station's Log_all.txt, "
-                                "or split run files (YYYYMMDD_HHMMSS_MAC1_MAC2_RESULT.txt).",
-                                "找不到 IW611 測試 log。請上傳含各站 Log_all.txt 的工單 zip，"
-                                "或已切好的單筆檔案（YYYYMMDD_HHMMSS_MAC1_MAC2_RESULT.txt）。"), "no_logs")
+        raise ApiError(400, Msg("No IQfact test runs were found in these files. Upload the tester logs (Log_all.txt "
+                                "under any name, .txt or .log), a zip of them, or split run files "
+                                "(YYYYMMDD_HHMMSS_MAC1_MAC2_RESULT.txt).",
+                                "這些檔案裡找不到 IQfact 測試紀錄。請上傳測試機的 log（Log_all.txt，檔名不限，"
+                                ".txt 或 .log）、它們的 zip，或已切好的單筆檔案（YYYYMMDD_HHMMSS_MAC1_MAC2_RESULT.txt）。"),
+                       "no_logs")
     names = list(file_names)
     for fname in file_names:
         if fname.lower().endswith(".zip"):

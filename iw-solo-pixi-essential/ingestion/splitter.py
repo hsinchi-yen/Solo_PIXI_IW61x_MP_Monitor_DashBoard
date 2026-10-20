@@ -8,8 +8,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+import io
 import os
 import re
+import zipfile
 from typing import Callable, Iterable
 
 
@@ -331,25 +333,31 @@ def decode_log(data: bytes) -> str:
 
 
 def _station_of(path: str) -> str:
-    parts = [p for p in path.replace("\\", "/").split("/") if p]
-    return parts[-2] if len(parts) >= 2 else "-"
+    parts = [p for p in path.replace("\\", "/").split("/") if p][:-1]
+    while parts and parts[-1].lower() == "split_output":     # the desktop splitter's output folder
+        parts.pop()
+    return parts[-1] if parts else "-"
+
+
+LOG_EXTENSIONS = (".txt", ".log")
+NESTED_ZIP_MAX_BYTES = MAX_LOG_ALL_BYTES
 
 
 def iter_upload_runs(entries):
     """entries: iterable of (path, bytes loader). Yields dicts per run:
         {station, filename, content, source}  — or {station, invalid: reason, source} for a block
-    that cannot be parsed. Log_all.txt files are split; already-split run files pass through."""
+    that cannot be parsed. Like the desktop splitter, any .txt / .log file is recognised by its
+    content: files holding IQfact runs (Log_all.txt under any name, IW611_PASS_LOG.txt …) are
+    split; already-split run files pass through; other text files are ignored."""
     for path, load in entries:
         name = path.replace("\\", "/").rsplit("/", 1)[-1]
         lower = name.lower()
-        if not lower.endswith(".txt") or lower == "summary.txt":
+        if not lower.endswith(LOG_EXTENSIONS) or lower == "summary.txt":
             continue
         station = _station_of(path)
         if OUTPUT_FILENAME_PATTERN.match(name):
             yield {"station": station, "filename": name, "content": normalize_newlines(decode_log(load())),
                    "source": path}
-            continue
-        if lower != LOG_ALL_NAME:
             continue
         for index, block in enumerate(split_run_blocks(decode_log(load())), start=1):
             try:
@@ -361,13 +369,21 @@ def iter_upload_runs(entries):
                    "content": normalize_newlines(block), "source": f"{path} #{index}"}
 
 
-def zip_entries(zf):
-    """(path, loader) for every file in a zip, skipping directories and macOS metadata."""
-    out = []
+def zip_entries(zf, prefix=""):
+    """(path, loader) for every file in a zip, skipping directories and macOS metadata.
+    Zips inside the zip are opened too (one level), within NESTED_ZIP_MAX_BYTES in total."""
+    out, nested_bytes = [], 0
     for info in zf.infolist():
         if info.is_dir() or info.filename.startswith("__MACOSX/"):
             continue
-        out.append((info.filename, (lambda i=info: zf.read(i))))
+        if info.filename.lower().endswith(".zip") and not prefix:
+            inner = zipfile.ZipFile(io.BytesIO(zf.read(info)))
+            nested_bytes += sum(i.file_size for i in inner.infolist())
+            if nested_bytes > NESTED_ZIP_MAX_BYTES:
+                raise ValueError("nested zip too large")
+            out.extend(zip_entries(inner, prefix=info.filename[:-4] + "/"))
+            continue
+        out.append((prefix + info.filename, (lambda i=info: zf.read(i))))
     return out
 
 

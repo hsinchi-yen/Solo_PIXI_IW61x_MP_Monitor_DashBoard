@@ -1,6 +1,8 @@
 """Unit tests that need no database: scope filters, account helpers, file names,
 per-file savepoints, the splitter's upload helpers and the AI report number check."""
+import io
 import unittest
+import zipfile
 from datetime import date
 from pathlib import Path
 from unittest.mock import patch
@@ -9,7 +11,7 @@ from services import auth_utils
 from parsers.base import DataQualityWarning
 from parsers.iw61x import parse_iw61x_log_file
 from errors import ApiError
-from ingestion.splitter import infer_work_order, is_valid_work_order, iter_upload_runs
+from ingestion.splitter import infer_work_order, is_valid_work_order, iter_upload_runs, zip_entries
 from services.filters import Scope, parse_scope, raw_where
 from services.ingest import file_name, parse_quantity, validate_upload
 from services.report_text import check_numbers
@@ -102,6 +104,35 @@ class UploadRuleTests(unittest.TestCase):
         runs = list(iter_upload_runs([(name, lambda: b"a\r\nb\r\n"), ("summary.txt", lambda: b"x")]))
         self.assertEqual(len(runs), 1)
         self.assertEqual(runs[0]["content"], "a\nb\n")          # same newlines as the desktop split file
+
+    def test_tester_logs_are_recognised_by_content_like_the_desktop_splitter(self):
+        station = ROOT / "rawlogs" / "TN329_IW611_LOG" / "TN329_IW611_LOG" / "30"
+        if not station.is_dir():
+            self.skipTest("sample station logs not available")
+        pass_log = (station / "IW611_PASS_LOG.txt").read_bytes()
+        runs = list(iter_upload_runs([("30/Log_all (1).txt", lambda: pass_log), ("IW611_FAIL_LOG.log",
+                                      lambda: (station / "IW611_FAIL_LOG.txt").read_bytes()),
+                                      ("notes.txt", lambda: b"just a note\r\n")]))
+        self.assertEqual([r["filename"] for r in runs], [
+            "20260721_143351_001F7B5806D4_001F7B5806D5_STOP.txt", "20260721_143508_001F7B5806D4_001F7B5806D5_PASS.txt",
+            "20260721_143702_001F7B5806DA_001F7B5806DB_FAIL.txt"])
+        self.assertEqual(runs[0]["station"], "30")
+        split = list(iter_upload_runs([("TN329/30/split_output/20260721_142350_001F7B5806CA_001F7B5806CB_PASS.txt",
+                                        lambda: b"a\r\n")]))
+        self.assertEqual(split[0]["station"], "30")
+
+    def test_zip_inside_a_zip_is_opened(self):
+        inner = io.BytesIO()
+        with zipfile.ZipFile(inner, "w") as z:
+            z.writestr("30/Log_all.txt", "x")
+        outer = io.BytesIO()
+        with zipfile.ZipFile(outer, "w") as z:
+            z.writestr("5101-260715003.zip", inner.getvalue())
+            z.writestr("readme.md", "y")
+        with zipfile.ZipFile(outer) as zf:
+            entries = zip_entries(zf)
+            self.assertEqual([(p, load()) for p, load in entries],
+                             [("5101-260715003/30/Log_all.txt", b"x"), ("readme.md", b"y")])
 
 
 class ReportNumberCheckTests(unittest.TestCase):

@@ -44,9 +44,9 @@ def analyze(request: Request, files: List[UploadFile] = File(...), user=Depends(
     try:
         for index, upload in enumerate(files):
             name = os.path.basename((upload.filename or "").replace("\\", "/")) or f"file{index}"
-            if not name.lower().endswith((".zip", ".txt")):
-                raise bad_request(Msg(f"{name}: only .zip and .txt files are accepted.",
-                                      f"{name}：只接受 .zip 和 .txt 檔案。"), "bad_type")
+            if not name.lower().endswith((".zip", ".txt", ".log")):
+                raise bad_request(Msg(f"{name}: only .zip, .txt and .log files are accepted.",
+                                      f"{name}：只接受 .zip、.txt 和 .log 檔案。"), "bad_type")
             stored = f"{index:04d}_{name}"
             with open(os.path.join(base, stored), "wb") as out:
                 shutil.copyfileobj(upload.file, out, 1024 * 1024)
