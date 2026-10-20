@@ -153,7 +153,7 @@ python tests/dry_run_180.py            # parse the 180 acceptance logs without a
 
 # Browser (npm i playwright-core; a running stack)
 node tests/browser/dashboard.js        # every page, both languages, spec check, report, admin
-node tests/browser/upload_assistant.js <zip> <dir>   # LOCAL ONLY: deletes and re-uploads the work order
+UPLOADER_USER=… UPLOADER_PASS=… node tests/browser/upload_assistant.js <zip> <dir>   # LOCAL ONLY: deletes and re-uploads the work order
 ```
 
 ## Acceptance Baseline

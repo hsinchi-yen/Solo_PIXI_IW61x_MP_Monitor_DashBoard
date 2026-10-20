@@ -149,8 +149,8 @@ class ReportNumberCheckTests(unittest.TestCase):
 
 class AccountHelperTests(unittest.TestCase):
     def test_password_hash_round_trip(self):
-        stored = auth_utils.hash_password("uploader123", iterations=1000)
-        self.assertTrue(auth_utils.verify_password("uploader123", stored))
+        stored = auth_utils.hash_password("sample-pass-1", iterations=1000)
+        self.assertTrue(auth_utils.verify_password("sample-pass-1", stored))
         self.assertFalse(auth_utils.verify_password("wrong-pass", stored))
         self.assertFalse(auth_utils.verify_password("x", "not-a-hash"))
 

@@ -1,11 +1,17 @@
 // AI upload assistant end to end: chat → upload → undo → upload again with the form.
 // WARNING: deletes work order 5101-260715003 from the target database first, then uploads it
 // again. Run it only against a local stack, never against production.
-// Needs a work-order zip (each station's Log_all.txt), the uploader op.test / uploader123, the
+// Needs a work-order zip (each station's Log_all.txt), an uploader account given as UPLOADER_USER /
+// UPLOADER_PASS (no built-in test account), the
 // administrator pixi / pixipass and AI enabled. Run: node tests/browser/upload_assistant.js <zip> <screenshot dir>
 const { chromium } = require('playwright-core');
 const BASE = process.env.BASE || 'http://localhost:8004';
 const ZIP = process.argv[2];
+const { UPLOADER_USER, UPLOADER_PASS } = process.env;
+if (!UPLOADER_USER || !UPLOADER_PASS) {
+    console.error('Set UPLOADER_USER and UPLOADER_PASS to an uploader account on the target stack.');
+    process.exit(2);
+}
 const OUT = process.argv[3];
 const check = (name, ok, detail = '') => console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? '  — ' + detail : ''}`);
 
@@ -28,8 +34,8 @@ async function api(path, opts = {}) {
     page.on('dialog', d => d.accept());
 
     await page.goto(`${BASE}/#logupload`, { waitUntil: 'networkidle' });
-    await page.fill('#luUser', 'op.test');
-    await page.fill('#luPass', 'uploader123');
+    await page.fill('#luUser', UPLOADER_USER);
+    await page.fill('#luPass', UPLOADER_PASS);
     await page.click('#btnLuLogin');
     await page.waitForSelector('#luPanel:not([hidden])');
     await page.setInputFiles('#luFile', ZIP);
