@@ -1,13 +1,13 @@
 """Health, LLM status, statistics refresh, page metadata."""
 import time
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 import config
 import db
 from errors import ApiError, Msg
-from services import auth, llm, stats
+from services import llm, stats
 
 router = APIRouter(tags=["system"])
 
@@ -44,8 +44,8 @@ _last_manual_refresh = {"at": 0.0}
 
 
 @router.post("/api/stats/refresh")
-def refresh_stats(_user=Depends(auth.current_user)):
-    """"Refresh now": rebuild the statistics views (signed-in accounts, at most every 10 seconds)."""
+def refresh_stats():
+    """"Refresh now": recompute the statistics (public like the dashboard, at most every 10 seconds)."""
     if time.time() - _last_manual_refresh["at"] < 10:
         raise ApiError(429, Msg("Just refreshed. Please try again in a few seconds.", "剛剛才更新過，請稍候再試"),
                        "too_soon")

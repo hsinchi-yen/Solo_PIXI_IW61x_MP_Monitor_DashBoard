@@ -157,7 +157,9 @@ log "Project directory: ${APP_DIR}"
 log "Ports: API=${IW_API_PORT}, Web=${IW_WEB_PORT}, PostgreSQL=${IW_DB_PORT}"
 log "Building and starting Docker Compose services..."
 compose up -d --build --remove-orphans
-compose exec -T nginx nginx -s reload >/dev/null
+# Recreate nginx so its bind mounts (nginx/, web/) point at the current folders even when a deploy
+# or rollback replaced them; a reload would keep serving the deleted ones.
+compose up -d --no-deps --force-recreate nginx
 
 wait_for_health() {
     local name="$1"

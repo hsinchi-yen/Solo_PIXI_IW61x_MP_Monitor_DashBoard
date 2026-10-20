@@ -47,11 +47,20 @@ class ProjectContractTests(unittest.TestCase):
         self.assertIn(".system_up.env", script)
         self.assertIn("docker compose", script)
         self.assertIn("SYSTEM_UP_PORT_CHECK_ONLY", script)
+        self.assertIn("--force-recreate nginx", script)
         self.assertIn("/health", script)
+
+    def test_deploy_scripts_back_up_and_roll_back(self):
+        deploy = (ROOT / "scripts" / "deploy.sh").read_text(encoding="utf-8")
+        for text in ("pg_dump", "oldbackup/$(date +%y%m%d)", "--exclude '.env'", "--exclude '.system_up.env'",
+                     "bash system_up.sh", "health check FAILED", "tar xzf"):
+            self.assertIn(text, deploy)
+        backup = (ROOT / "scripts" / "backup_db.sh").read_text(encoding="utf-8")
+        self.assertIn("KEEP_DAYS:-14", backup)
 
     def test_web_app_files_exist(self):
         web = ROOT / "web"
-        for rel in ["index.html", "legacy.html", "css/theme.css", "css/base.css", "css/pages.css", "js/main.js",
+        for rel in ["index.html", "css/theme.css", "css/base.css", "css/pages.css", "js/main.js",
                     "js/report.js", "js/core/api.js", "js/core/i18n.js", "js/core/strings.en.js",
                     "js/core/strings.zh.js", "vendor/chart.umd-4.4.1.min.js", "vendor/marked-12.0.1.min.js",
                     "vendor/purify-3.1.6.min.js"]:
@@ -64,13 +73,8 @@ class ProjectContractTests(unittest.TestCase):
                      "logupload", "accounts"]:
             self.assertIn(f'id="page-{page}"', html)
         self.assertFalse((ROOT / "static").exists(), "the pre-2.0 static/ pages were removed (Q23)")
-
-    def test_legacy_page_talks_to_the_legacy_api(self):
-        html = (ROOT / "web" / "legacy.html").read_text(encoding="utf-8")
-        self.assertIn("IW61x", html)
-        self.assertIn("'/api/legacy/' + input.slice(5)", html)
-        self.assertIn('src="/vendor/chart.umd-4.4.1.min.js"', html)
-        self.assertNotIn("PIXI-9377-S", html)
+        self.assertFalse((web / "legacy.html").exists(), "the pre-2.0 page is removed with the 2.0 deploy (Q28)")
+        self.assertFalse((ROOT / "api" / "legacy").exists())
 
     def test_schema_declares_normalized_tables(self):
         schema = (ROOT / "schema.sql").read_text(encoding="utf-8")

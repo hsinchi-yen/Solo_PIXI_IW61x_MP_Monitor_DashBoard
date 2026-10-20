@@ -18,7 +18,7 @@ and AI quality reports. Version 2.0 follows the layout and structure of the Solo
 | Accounts | Uploader accounts, account audit, sign-in log (administrator) |
 
 English by default with a one-click 中文 switch; Dark (default) and Light themes. The pre-2.0
-single page is kept at `/legacy.html` for comparison and will be removed after sign-off.
+single page and its API were removed in 2.0 (decision Q28).
 
 ## Quick Start
 
@@ -28,7 +28,7 @@ cd iw-solo-pixi-essential
 run.cmd                 # Windows: the same, then opens http://localhost:8004
 ```
 
-- Dashboard: http://localhost:8004 (legacy page: http://localhost:8004/legacy.html)
+- Dashboard: http://localhost:8004
 - API: http://localhost:8003/health, http://localhost:8003/docs
 
 Settings live in `.env` next to `docker-compose.yml` (template: `.env.example`).
@@ -41,7 +41,6 @@ api/            FastAPI (python 3.12)
   routers/      system, analytics, auth, admin, tweak, upload (Log Upload), reports (AI)
   services/     stats, measurements, filters, ingest, upload_chat, reports, report_text,
                 llm, migrations, scheduler, reparse, auth
-  legacy/       the pre-2.0 API, unchanged, at /api/legacy for web/legacy.html
 parsers/        IW611 IQfact log parser (shared with the desktop tools)
 ingestion/      repository + splitter (shared with the desktop tools)
 web/            static dashboard served by nginx (ES modules, no build step)
@@ -126,6 +125,13 @@ llama.cpp server); `LLM_MODEL` defaults to `Qwen3.8-27B-UD-Q6_K_L`, thinking off
   stored, generated after uploads and daily at `REPORT_DAILY_AT`, and can be copied,
   downloaded as Markdown, compared and asked about.
 
+## Deploying
+
+`scripts/deploy.sh` backs up the server (files + `pg_dump` into `oldbackup/<YYMMDD>/`), syncs the
+code, runs `system_up.sh`, checks health and restores the previous files automatically on failure;
+`scripts/backup_db.sh` is the daily backup (14 days). Details in Traditional Chinese:
+[docs/deployguide.md](docs/deployguide.md); user guide: [docs/operator_manual.md](docs/operator_manual.md).
+
 ## Port Allocation
 
 | Service | Default host port | Override |
@@ -147,7 +153,6 @@ python tests/dry_run_180.py            # parse the 180 acceptance logs without a
 
 # Browser (npm i playwright-core; a running stack)
 node tests/browser/dashboard.js        # every page, both languages, spec check, report, admin
-node tests/browser/legacy_page.js      # the pre-2.0 page at /legacy.html
 node tests/browser/upload_assistant.js <zip> <dir>   # LOCAL ONLY: deletes and re-uploads the work order
 ```
 

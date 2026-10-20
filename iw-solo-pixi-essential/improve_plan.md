@@ -253,6 +253,9 @@
 | Q23 | 舊頁面 | 新版上線；舊單檔暫留 `/legacy.html` 供對照，驗收後刪除；沒在用的 10 個舊多檔頁面現在刪除 |
 | Q24 | 上傳助理語言 | 跟著介面語言（英文／中文）切換 |
 | Q25 | 上傳紀錄可見範圍 | 上傳者看、撤銷自己的；管理者看、撤銷全部並可依上傳者篩選 |
+| Q26 | 下一步 | 使用者在本機檢查 v2.0；同時做第 5 階段（deploy.sh、每日備份、操作手冊），只在本機演練 |
+| Q27 | AI 報告速度（中英合計約 55 秒） | 可以接受（上傳後與每日自動產生並保存） |
+| Q28 | 舊單檔頁面 `/legacy.html` | **部署時就移除**（連同 `/api/legacy`） |
 | 其他 | AGENTS.md 第 9 項 | 已改為「資料庫存的 session token，管理者＋上傳者」（2026-10-20） |
 | 其他 | 管理者密碼 | 先沿用預設；帳號管理頁第 4 階段完成後再看 |
 
@@ -292,3 +295,20 @@
 - 部署後所有人需要重新登入；上傳者帳號在新的「帳號管理」頁建立。
 
 **還沒做（第 5 階段）**：`deploy.sh`（備份 → 同步 → 建置 → 健康檢查 → 失敗自動還原）、每日 DB 備份排程、CI、操作手冊、移除 `/legacy.html`。
+
+### 第 5 階段：部署與維運（2026-10-20，本機演練完成，未部署）
+
+- **移除舊頁面（Q28）**：`/legacy.html`、`/api/legacy/*`、`api/legacy/` 全部刪除；契約測試確認不存在。
+- **`scripts/deploy.sh`**：備份（`oldbackup/<YYMMDD>/files_<HHMMSS>.tgz`＋`pg_dump`，任一為空就中止）→ `rsync`（不碰伺服器的 `.env`、`.system_up.env`、`oldbackup/`、`dbbackup/`）→ `system_up.sh` → 健康檢查（版本號、首頁、`/api/summary`）→ 失敗自動還原檔案。支援 `--dry-run`、`--delete`、`--local`（本機演練）。
+- **`scripts/backup_db.sh`**：每日 `pg_dump` 到 `dbbackup/`，保留 14 天（cron 指令見 `docs/deployguide.md`）。
+- **`system_up.sh`**：nginx 改成重建容器（還原檔案後 bind mount 才會指到新的資料夾）。
+- **「立即更新」改為公開**（和看板一樣不用登入，10 秒內只能按一次），按鈕不需要登入即可使用。
+- **文件**：`docs/deployguide.md`（部署、第一次部署 2.0.0 的 `.env`、備份與回復）、`docs/operator_manual.md`（看板與上傳操作）。
+
+**演練（本機，compose 專案 `iw-rehearsal`，port 8023／8024／5444，用正式機舊版檔案＋正式機資料庫備份）**
+- 舊版 → 2.0.0：成功，約 10 秒；數字與正式機相同；舊的 `static/`、`log_iw_uploader_app.py` 被移除；`.env`、`.system_up.env` 保留。
+- 故意部署壞掉的版本：自動還原成功、看板正常（過程中修正 3 個問題：舊版留下 root 擁有的 `__pycache__`、管線遮住 `system_up.sh` 的失敗、nginx 掛載指到已刪除的資料夾）。
+- `backup_db.sh`：備份可 `pg_restore -l` 讀取，超過保留天數的檔案會刪除。
+- 驗證：pytest 52 項＋39 個子測試全過；瀏覽器 34 項全過。
+
+**還沒做**：CI（GitHub Actions）；正式機部署（等你在本機確認後同意才執行）。

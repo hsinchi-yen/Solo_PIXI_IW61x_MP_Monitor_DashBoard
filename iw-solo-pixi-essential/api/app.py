@@ -3,7 +3,6 @@ IW61x Solo PIXI production-test dashboard — FastAPI entry point.
 
     routers/   HTTP endpoints, one module per area (system, analytics, auth, admin, tweak, upload, reports)
     services/  queries and business logic (statistics views, measurements, AI reports, ingest, scheduler)
-    legacy/    the pre-2.0 API for web/legacy.html, mounted at /api/legacy (kept unchanged, decision Q23)
     db.py      connection pool;  config.py  settings;  errors.py  {"error", "code"} responses
 
 Shared with the desktop tools (one directory up): parsers/, ingestion/.
@@ -28,7 +27,6 @@ from fastapi.staticfiles import StaticFiles  # noqa: E402
 import config  # noqa: E402
 import db  # noqa: E402
 import errors  # noqa: E402
-import legacy  # noqa: E402
 from routers import admin, analytics, auth, reports, system, tweak, upload  # noqa: E402
 from services import migrations, scheduler  # noqa: E402
 
@@ -78,7 +76,6 @@ async def timing(request: Request, call_next):
 for module in (system, analytics, auth, admin, tweak, upload, reports):
     app.include_router(module.router)
 app.include_router(tweak.jobs)
-app.include_router(legacy.router)
 
 if os.path.isdir(config.WEB_DIR):
     app.mount("/", StaticFiles(directory=config.WEB_DIR, html=True), name="web")

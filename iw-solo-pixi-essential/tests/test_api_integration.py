@@ -65,8 +65,8 @@ class ApiIntegrationTests(unittest.TestCase):
             "ADMIN_USER": "itadmin", "ADMIN_PASS": "it-admin-pass", "IW_DISABLE_SCHEDULER": "1",
             "UPLOAD_TMP_DIR": f"/tmp/{DB_NAME}", "LLM_ENABLED": "false",
         })
-        for name in [m for m in sys.modules if m in ("config", "db", "app", "legacy", "routers", "services")
-                     or m.startswith(("legacy.", "routers.", "services."))]:
+        for name in [m for m in sys.modules if m in ("config", "db", "app", "routers", "services")
+                     or m.startswith(("routers.", "services."))]:
             sys.modules.pop(name, None)
         import app as app_module
         import db as db_module
@@ -255,19 +255,6 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual((item["units"], item["target_total"], item["pass"]), (120, 120, 119))
         self.assertEqual(item["aligned_yield"], 99.17)
 
-    def test_metric_top_list_is_deterministic(self):
-        first = self.client.get("/api/legacy/wifi-analysis").json()
-        for _ in range(3):
-            self.assertEqual(self.client.get("/api/legacy/wifi-analysis").json(), first)
-
-    def test_legacy_api_still_answers(self):
-        s = self.client.get("/api/legacy/summary").json()
-        self.assertEqual((s["total"], s["pass"], s["fail"], s["stop"]), (120, 119, 1, 0))
-        self.assertEqual(len(self.client.get("/api/legacy/fails?limit=500").json()), 59)
-        self.assertEqual(self.client.post("/api/legacy/tweak/login",
-                                          json={"username": "itadmin", "password": "it-admin-pass"}).status_code, 200)
-
-    # ── AI off ───────────────────────────────────────────────────────────────
     def test_reports_say_ai_is_off(self):
         r = self.client.post(f"/api/reports/{WO}/generate")
         events = _ndjson(r)
@@ -284,13 +271,11 @@ class ApiIntegrationTests(unittest.TestCase):
             r = self.client.get("/api/summary", params=params)
             self.assertEqual(r.status_code, 400, params)
             self.assertNotIn("psycopg2", r.text)
-        self.assertEqual(self.client.get("/api/legacy/summary", params={"day": "foo"}).status_code, 400)
 
     # ── permissions ──────────────────────────────────────────────────────────
     def test_writes_and_raw_logs_need_a_session(self):
         for method, path in (("post", "/api/alignment-targets"), ("get", "/api/raw-log/1"), ("get", "/api/tweak/records"),
-                             ("post", "/api/reparse"), ("post", "/api/legacy/alignment-targets"),
-                             ("get", "/api/legacy/raw-log/1"), ("post", "/api/stats/refresh")):
+                             ("post", "/api/reparse")):
             r = getattr(self.client, method)(path, **({"json": {}} if method == "post" else {}))
             self.assertEqual(r.status_code, 401, path)
         files = [("files", ("a.txt", b"x", "text/plain"))]
