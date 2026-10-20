@@ -3,7 +3,6 @@
 **/.pytest_cache
 *.md
 *.png
-web/
 static/
 nginx/
 tests/

@@ -12,6 +12,9 @@ COPY schema.sql /app/schema.sql
 COPY parsers/ /app/parsers/
 COPY ingestion/ /app/ingestion/
 COPY api/ /app/api/
+# The dashboard is also served by the API itself, so it opens on the API port (8003) as it always has,
+# not only through nginx (8004).
+COPY web/ /app/web/
 
 RUN useradd --system --uid 1000 --home /app iw && mkdir -p /tmp/iw_uploads && chown iw /tmp/iw_uploads
 USER iw

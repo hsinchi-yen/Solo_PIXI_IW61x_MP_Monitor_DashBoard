@@ -6,8 +6,8 @@ IW61x Solo PIXI production-test dashboard — FastAPI entry point.
     db.py      connection pool;  config.py  settings;  errors.py  {"error", "code"} responses
 
 Shared with the desktop tools (one directory up): parsers/, ingestion/.
-The dashboard itself (web/) is served by nginx; StaticFiles below only covers running
-uvicorn without nginx.
+The dashboard (web/) is served twice: by nginx on 8004 and by StaticFiles below on the API port
+8003, where users have always opened it.
 """
 import logging
 import os

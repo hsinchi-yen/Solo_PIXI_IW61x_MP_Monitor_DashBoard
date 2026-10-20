@@ -30,8 +30,10 @@ class ProjectContractTests(unittest.TestCase):
     def test_code_is_baked_into_the_image(self):
         dockerfile = (ROOT / "api" / "Dockerfile").read_text(encoding="utf-8")
         for line in ("COPY parsers/ /app/parsers/", "COPY ingestion/ /app/ingestion/", "COPY api/ /app/api/",
-                     "COPY schema.sql /app/schema.sql"):
+                     "COPY schema.sql /app/schema.sql", "COPY web/ /app/web/"):
             self.assertIn(line, dockerfile)
+        ignored = (ROOT / ".dockerignore").read_text(encoding="utf-8").split()
+        self.assertNotIn("web/", ignored, "the API serves the dashboard on 8003, so web/ must be in the image")
         self.assertIn("USER iw", dockerfile)
 
     def test_linux_system_up_script_has_port_conflict_and_health_guards(self):
