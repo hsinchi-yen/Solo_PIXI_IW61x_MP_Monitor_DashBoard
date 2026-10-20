@@ -24,6 +24,9 @@ __pycache__/
 # Database dumps pulled from production
 /iw-solo-pixi-essential/dbbackup/
 
+# Work order 5101-260629002: per-DUT log format not supported — never commit its files (2026-10-20)
+*5101-260629002*
+
 # OS / editor cruft
 .DS_Store
 Thumbs.db
