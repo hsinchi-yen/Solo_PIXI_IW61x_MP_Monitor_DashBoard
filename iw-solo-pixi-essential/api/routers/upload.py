@@ -232,7 +232,7 @@ def history(limit: int = Query(20, ge=1, le=200), username: str = Query(None, ma
     """Recent batches. Uploaders always get only their own; the administrator may filter by uploader."""
     if user["role"] != "admin":
         username = user["username"]
-    where, params = "WHERE l.status <> 'analyzed'", []
+    where, params = "WHERE l.status NOT IN ('analyzed', 'discarded')", []
     if username:
         where += " AND l.username = %s"
         params.append(username)
@@ -246,6 +246,21 @@ def history(limit: int = Query(20, ge=1, le=200), username: str = Query(None, ma
             {where} ORDER BY l.created_at DESC LIMIT %s
         """, params + [limit])
     return {"items": items}
+
+
+@router.post("/{upload_id}/discard")
+def discard(upload_id: str, user=Depends(auth.current_user)):
+    """Drop an analysed upload that was not uploaded (files removed or chosen again): delete its
+    stored files now instead of waiting for them to expire. Nothing was written to test_results."""
+    with db.db() as conn:
+        row = ingest.owned_upload(conn, upload_id, user)
+        if row["status"] != "analyzed":
+            raise bad_request(Msg(f"Only an analysed upload that was not uploaded can be discarded (current status: "
+                                  f"{row['status']}).", f"只有分析完成、尚未上傳的檔案可以移除（目前狀態：{row['status']}）"),
+                              "not_discardable")
+        db.execute(conn, "UPDATE upload_log SET status = 'discarded', finished_at = NOW() WHERE id = %s", (upload_id,))
+    ingest.remove_upload_files(upload_id)
+    return {"discarded": True, "upload_id": upload_id}
 
 
 @router.get("/{upload_id}")

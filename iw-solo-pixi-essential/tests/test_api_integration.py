@@ -145,6 +145,20 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual((facts["total_records"], facts["unique_mac1"]), (180, 120))
         self.assertEqual(facts["existing_by_wo"], {WO: 180})       # same runs as the plain zip: same hashes
 
+    def test_removed_files_discard_the_analysis(self):
+        upload_id = self._analyze(self.uploader)["upload_id"]
+        stored = os.path.join(os.environ["UPLOAD_TMP_DIR"], upload_id)
+        self.assertTrue(os.path.isdir(stored))
+        self.assertEqual(self.client.post(f"/api/log-upload/{upload_id}/discard", headers=self.admin).status_code, 200)
+        self.assertFalse(os.path.isdir(stored))
+        self.assertEqual(self._scalar("SELECT status FROM upload_log WHERE id = %s", (upload_id,)), "discarded")
+        r = self.client.post(f"/api/log-upload/{upload_id}/discard", headers=self.uploader)
+        self.assertEqual((r.status_code, r.json()["code"]), (400, "not_discardable"))
+        history = self.client.get("/api/log-upload/history", headers=self.uploader).json()["items"]
+        self.assertNotIn(upload_id, [h["id"] for h in history])
+        done = self.first_upload["upload"]["upload_id"]
+        self.assertEqual(self.client.post(f"/api/log-upload/{done}/discard", headers=self.uploader).status_code, 400)
+
     def test_commit_wrote_every_run_and_recorded_the_batch(self):
         self.assertEqual(self.first_upload["done"]["uploaded"], 180)
         upload_id = self.first_upload["upload"]["upload_id"]

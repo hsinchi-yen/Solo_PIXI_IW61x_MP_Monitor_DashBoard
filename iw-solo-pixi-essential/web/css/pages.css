@@ -70,6 +70,13 @@
 }
 .drop:hover, .drop:focus-visible, .drop.dragover { border-color: var(--accent); background: var(--accent-bg); outline: none; }
 .drop.disabled { pointer-events: none; opacity: .5; }
+.lu-files { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 10px; }
+.lu-file-list { list-style: none; display: grid; gap: 4px; width: 100%; margin: 0; padding: 0; }
+.lu-file-list li { display: flex; align-items: center; gap: 10px; padding: 4px 6px 4px 12px; border-radius: 8px;
+                   background: var(--surface-2); font-size: 13.5px; }
+.lu-file-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.lu-file-size { color: var(--text-2); white-space: nowrap; }
+.lu-file-list .icon-btn:disabled { opacity: .35; cursor: default; background: none; }
 .status-line { font-size: 13.5px; color: var(--text-2); margin-top: 10px; min-height: 20px; }
 .status-line.error { color: var(--bad); } .status-line.ok { color: var(--good); }
 .issues { list-style: none; display: grid; gap: 6px; margin: 10px 0; }

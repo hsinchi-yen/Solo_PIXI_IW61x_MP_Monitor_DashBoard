@@ -1,6 +1,8 @@
 // Log Uploader: work-order zip (each station's Log_all.txt) or split run files → /api/log-upload/analyze
 // → confirm work order + planned quantity (AI chat via /chat, or the form via /validate — same rules R1–R9)
 // → /commit (NDJSON progress stream). Uploaders see and undo only their own batches.
+// Chosen files form a list: dropping more adds to it, ✕ removes one, "Remove all" clears it; every
+// change re-analyses the remaining files and discards the previous analysis on the server.
 // Server texts (checks, chat opening, errors) come in both languages; the AI replies in the UI language.
 import { apiDelete, apiGet, apiPost, errorText, eventText, getToken, readNdjson, request, streamPost, toError } from '../core/api.js';
 import * as auth from '../core/auth.js';
@@ -12,6 +14,7 @@ const st = {
     uploadId: null, owner: null, facts: null, committedId: null, busy: false,
     validation: null, validateSeq: 0, mode: 'form', aiAvailable: false,
     chat: [], chatBusy: false, extractFails: 0, openings: {}, fileLabel: null, result: null,
+    files: [],
 };
 const statusText = {};          // id → [text or () => text, kind], re-rendered on a language switch
 let appRef;
@@ -37,7 +40,14 @@ function renderAccess() {
 }
 
 /* ─── Step 1: choose + analyze ─── */
-function resetFlow() {
+/** Drop the server copy of an analysis that was not uploaded (best effort; it also expires on its own). */
+function discardAnalysis() {
+    if (st.uploadId && !st.committedId) apiPost(`/api/log-upload/${st.uploadId}/discard`).catch(() => {});
+}
+
+function resetFlow({ keepFiles = false } = {}) {
+    discardAnalysis();
+    if (!keepFiles) st.files = [];
     Object.assign(st, { uploadId: null, owner: null, facts: null, committedId: null, validation: null, chat: [], extractFails: 0,
                         openings: {}, fileLabel: null, result: null });
     st.validateSeq += 1;
@@ -57,12 +67,44 @@ function resetFlow() {
     $('#luAckRow').hidden = true;
     setInputsDisabled(false);
     updateUploadButton();
+    renderFileList();
+}
+
+const fileKey = f => `${f.name}|${f.size}|${f.lastModified}`;
+
+/** Add files to the list (a new batch starts after a finished upload) and analyse the whole list. */
+function addFiles(files) {
+    if (st.busy || !files.length) return;
+    if (st.committedId) st.files = [];
+    const known = new Set(st.files.map(fileKey));
+    st.files = [...st.files, ...files.filter(f => !known.has(fileKey(f)))];
+    analyze(st.files);
+}
+
+function removeFile(index) {
+    if (st.busy) return;
+    st.files.splice(index, 1);
+    if (st.files.length) analyze(st.files);
+    else resetFlow();
+}
+
+function renderFileList() {
+    const locked = st.busy || !!st.committedId;
+    $('#luFiles').hidden = !st.files.length;
+    $('#luFileList').innerHTML = st.files.map((f, i) => `<li>
+        <span class="lu-file-name">${esc(f.name)}</span>
+        <span class="lu-file-size num">${(f.size / 1048576).toFixed(1)} MB</span>
+        <button class="icon-btn" type="button" data-remove-file="${i}" ${locked ? 'disabled' : ''}
+                title="${esc(t('lu.removeFile', { name: f.name }))}" aria-label="${esc(t('lu.removeFile', { name: f.name }))}">×</button>
+    </li>`).join('');
+    $('#btnLuClearFiles').disabled = locked;
 }
 
 function setInputsDisabled(disabled) {
     ['#luWo', '#luQty', '#luAck', '#btnLuReset', '#btnLuMode'].forEach(id => { $(id).disabled = disabled; });
     setChatDisabled(disabled || st.chatBusy);
     $('#luDrop').classList.toggle('disabled', disabled);
+    renderFileList();
 }
 
 function uploadWithProgress(url, formData, onProgress) {
@@ -82,7 +124,7 @@ function uploadWithProgress(url, formData, onProgress) {
 }
 
 async function analyze(files) {
-    resetFlow();
+    resetFlow({ keepFiles: true });
     const size = files.reduce((a, f) => a + f.size, 0);
     const name = files.length === 1 ? files[0].name : t('lu.nFiles', { n: files.length });
     st.fileLabel = `${name}${t('common.dot')}${(size / 1048576).toFixed(1)} MB`;
@@ -477,14 +519,18 @@ function init(app) {
     drop.addEventListener('drop', e => {
         e.preventDefault();
         drop.classList.remove('dragover');
-        const files = [...(e.dataTransfer.files || [])];
-        if (files.length && !st.busy) analyze(files);
+        addFiles([...(e.dataTransfer.files || [])]);
     });
-    $('#luFile').addEventListener('change', e => { const files = [...(e.target.files || [])]; if (files.length) analyze(files); });
+    $('#luFile').addEventListener('change', e => { addFiles([...(e.target.files || [])]); e.target.value = ''; });
+    $('#luFileList').addEventListener('click', e => {
+        const btn = e.target.closest('[data-remove-file]');
+        if (btn) removeFile(Number(btn.dataset.removeFile));
+    });
+    $('#btnLuClearFiles').addEventListener('click', () => { if (!st.busy) resetFlow(); });
     const debounced = debounce(validate, 300);
     ['#luWo', '#luQty'].forEach(id => $(id).addEventListener('input', () => { st.validation = null; updateUploadButton(); debounced(); }));
     $('#luAck').addEventListener('change', updateUploadButton);
-    $('#btnLuReset').addEventListener('click', resetFlow);
+    $('#btnLuReset').addEventListener('click', () => resetFlow());
     $('#btnLuNext').addEventListener('click', () => { resetFlow(); $('#luDrop').focus(); });
     $('#btnLuMode').addEventListener('click', () => { if (!st.chatBusy) setMode(st.mode === 'chat' ? 'form' : 'chat'); });
     $('#btnLuChatSend').addEventListener('click', chatSend);
@@ -511,6 +557,7 @@ async function load() {
 function onLangChange() {
     renderAccess();
     $('#luFileInfo').textContent = st.fileLabel || t('lu.noFile');
+    renderFileList();
     for (const [id, [text, kind]] of Object.entries(statusText)) setStatus(id, text, kind);
     if (st.facts) { renderFacts(st.facts); renderWoPlaceholder(); }
     renderModeLabels();
