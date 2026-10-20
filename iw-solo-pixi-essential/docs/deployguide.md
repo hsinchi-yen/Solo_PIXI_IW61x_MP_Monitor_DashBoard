@@ -1,6 +1,6 @@
 # 部署指南 — IW61x Solo PIXI Dashboard
 
-正式環境：`sit@10.20.31.40:/mnt/md127/iw-solo-pixi-essential`（compose 專案 `iw-solo-pixi-essential`；看板 port 8004、API 8003、資料庫 5434）。
+正式環境：`sit@10.20.31.40:/mnt/md127/iw-solo-pixi-essential`（compose 專案 `iw-solo-pixi-essential`；看板 `http://10.20.31.40:8003`（使用者一直用的網址，API 同一個 port）與 8004（nginx），資料庫 5434）。**port 不可更改。**
 同一台主機上的 `pixi-solo-dashboard`（8001／5433）和其他系統**不要動**。
 
 > 任何正式環境部署都先在本機驗證，經負責人同意後才執行。
@@ -87,4 +87,5 @@ bash system_up.sh
 
 | 日期 | 版本 | 備份 | 驗收 |
 |---|---|---|---|
-| — | 2.0.0 | — | 尚未部署 |
+| 2026-10-20 17:12 | 2.0.0（`4d29601`） | `oldbackup/261020/files_171207.tgz`、`pixi_test_20261020_171207.dump`；`.env` 原檔 `env_170919.bak` | 健康檢查通過；但 8003 首頁 404（舊版看板在 8003） |
+| 2026-10-20 17:15 | 2.0.0（`c799d56`，看板同時由 8003 提供） | `oldbackup/261020/files_171530.tgz`、`pixi_test_20261020_171530.dump` | 8003／8004 首頁正常；計畫項目檢查（唯讀）兩個 port 各 35 項通過；28 次頁面載入無錯誤；AI 已連線 |
