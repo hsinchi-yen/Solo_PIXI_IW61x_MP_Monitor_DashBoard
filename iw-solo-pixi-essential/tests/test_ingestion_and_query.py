@@ -4,7 +4,7 @@ from tempfile import TemporaryDirectory
 
 from ingestion.service import InMemoryRunRepository, collect_log_files, ingest_paths
 from parsers.iw61x import parse_iw61x_log_file
-from api.query_service import build_summary_from_records
+from legacy.query_service import build_summary_from_records
 
 
 ROOT = Path(__file__).resolve().parents[2]

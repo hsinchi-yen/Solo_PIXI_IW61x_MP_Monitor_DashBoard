@@ -5,11 +5,11 @@ from datetime import date
 from pathlib import Path
 from unittest.mock import patch
 
-import auth_utils
+from services import auth_utils
 from parsers.base import DataQualityWarning
 from parsers.iw61x import parse_iw61x_log_file
-from query_service import fetch_records, sql_filters
-from scope import file_name
+from legacy.query_service import fetch_records, sql_filters
+from legacy.scope import file_name
 from ingestion.postgres import PostgresRunRepository
 
 ROOT = Path(__file__).resolve().parents[2]

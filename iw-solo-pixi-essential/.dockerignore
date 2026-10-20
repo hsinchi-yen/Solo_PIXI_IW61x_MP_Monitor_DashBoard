@@ -1,0 +1,14 @@
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+*.md
+*.png
+web/
+static/
+nginx/
+tests/
+.env
+.system_up.env
+oldbackup/
+dbbackup/
+docs/

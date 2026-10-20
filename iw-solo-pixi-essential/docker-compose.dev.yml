@@ -1,0 +1,11 @@
+# Development overlay: run the api from the working tree instead of the baked image.
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+# After editing Python files: docker compose -f docker-compose.yml -f docker-compose.dev.yml restart api
+# (web/ is served live by nginx in both modes — just reload the browser.)
+services:
+  api:
+    volumes:
+      - ./api:/app/api:ro
+      - ./parsers:/app/parsers:ro
+      - ./ingestion:/app/ingestion:ro
+      - ./schema.sql:/app/schema.sql:ro

@@ -16,10 +16,23 @@ class ProjectContractTests(unittest.TestCase):
         self.assertIn("@postgres:5432/", compose)
         self.assertNotIn("5433:5432", compose)
         self.assertNotIn("8001:80", compose)
+        for name in ("iw-pixi-pgdata", "iw-pixi-uploads", "iw-pixi-net"):
+            self.assertIn(name, compose)
+        # AI stays off unless the server's .env turns it on (decision Q13).
+        self.assertIn("LLM_ENABLED: ${LLM_ENABLED:-false}", compose)
+        self.assertIn("LLM_API_BASE: ${LLM_API_BASE:-}", compose)
 
         nginx = (ROOT / "nginx" / "default.conf").read_text(encoding="utf-8")
-        self.assertIn("proxy_pass http://api:8003;", nginx)
-        self.assertNotIn("iw-pixi-api", nginx)
+        self.assertIn("server api:8003;", nginx)
+        self.assertIn("root /usr/share/nginx/html;", nginx)
+        self.assertIn("proxy_buffering off;", nginx)
+
+    def test_code_is_baked_into_the_image(self):
+        dockerfile = (ROOT / "api" / "Dockerfile").read_text(encoding="utf-8")
+        for line in ("COPY parsers/ /app/parsers/", "COPY ingestion/ /app/ingestion/", "COPY api/ /app/api/",
+                     "COPY schema.sql /app/schema.sql"):
+            self.assertIn(line, dockerfile)
+        self.assertIn("USER iw", dockerfile)
 
     def test_linux_system_up_script_has_port_conflict_and_health_guards(self):
         script_path = ROOT / "system_up.sh"
@@ -33,96 +46,36 @@ class ProjectContractTests(unittest.TestCase):
         self.assertIn("IW_DB_PORT", script)
         self.assertIn(".system_up.env", script)
         self.assertIn("docker compose", script)
-        self.assertIn("nginx -s reload", script)
         self.assertIn("SYSTEM_UP_PORT_CHECK_ONLY", script)
         self.assertIn("/health", script)
 
-    def test_dashboard_pages_and_shared_assets_exist(self):
-        pages = [
-            "index.html",
-            "work-orders.html",
-            "fail-list.html",
-            "fail-analysis.html",
-            "bt-analysis.html",
-            "wifi-analysis.html",
-            "advanced.html",
-            "upload.html",
-            "admin.html",
-            "alignment.html",
-            "styles.css",
-            "common.js",
-            "chart-lite.js",
-            "ai.js",
-        ]
-        for page in pages:
-            self.assertTrue((ROOT / "static" / page).exists(), page)
-
-        script = (ROOT / "static" / "common.js").read_text(encoding="utf-8")
-        script += (ROOT / "static" / "ai.js").read_text(encoding="utf-8")
-        for endpoint in [
-            "/api/summary",
-            "/api/yield-trend",
-            "/api/work-order-summary",
-            "/api/retries",
-            "/api/fail-analysis",
-            "/api/fail-list",
-            "/api/bt-analysis",
-            "/api/wifi-analysis",
-            "/api/hourly-throughput",
-            "/api/upload/",
-            "/api/admin/login",
-            "/api/admin/alignment-targets",
-            "/api/llm-status",
-            "/api/workorders/",
-        ]:
-            self.assertIn(endpoint, script)
-
-    def test_reference_single_page_dashboard_contract(self):
-        dashboard = ROOT / "static" / "solo_pixi_dashboard.html"
-        self.assertTrue(dashboard.exists())
-
-        html = dashboard.read_text(encoding="utf-8")
-        self.assertIn("IW61x Solo PIXI", html)
-        self.assertIn('src="/static/vendor/chart.umd.min.js"', html)
-        self.assertIn('src="/static/vendor/marked.min.js"', html)
-        for page in [
-            "overview",
-            "workorders",
-            "fails",
-            "bt",
-            "wifi",
-            "advanced",
-            "failanalysis",
-            "dbtweak",
-            "dataalign",
-            "upload",
-        ]:
+    def test_web_app_files_exist(self):
+        web = ROOT / "web"
+        for rel in ["index.html", "legacy.html", "css/theme.css", "css/base.css", "css/pages.css", "js/main.js",
+                    "js/report.js", "js/core/api.js", "js/core/i18n.js", "js/core/strings.en.js",
+                    "js/core/strings.zh.js", "vendor/chart.umd-4.4.1.min.js", "vendor/marked-12.0.1.min.js",
+                    "vendor/purify-3.1.6.min.js"]:
+            self.assertTrue((web / rel).exists(), rel)
+        for page in ["overview", "workorders", "fails", "measurements", "failanalysis", "dbtweak", "dataalign",
+                     "logupload", "accounts"]:
+            self.assertTrue((web / "js" / "pages" / f"{page}.js").exists(), page)
+        html = (web / "index.html").read_text(encoding="utf-8")
+        for page in ["overview", "workorders", "fails", "measurements", "failanalysis", "dbtweak", "dataalign",
+                     "logupload", "accounts"]:
             self.assertIn(f'id="page-{page}"', html)
+        self.assertFalse((ROOT / "static").exists(), "the pre-2.0 static/ pages were removed (Q23)")
 
-        self.assertIn("Aligned KPI", html)
-        self.assertIn("Raw KPI", html)
-        self.assertIn("Yield %", html)
-        self.assertIn("/api/upload/", html)
-        self.assertIn('id="iwUploadFolder"', html)
-        self.assertIn("webkitdirectory", html)
-        self.assertIn("webkitRelativePath", html)
-
-        chart = ROOT / "static" / "vendor" / "chart.umd.min.js"
-        marked = ROOT / "static" / "vendor" / "marked.min.js"
-        self.assertTrue(chart.exists())
-        self.assertTrue(marked.exists())
-        self.assertGreater(chart.stat().st_size, 150_000)
-        self.assertGreater(marked.stat().st_size, 30_000)
+    def test_legacy_page_talks_to_the_legacy_api(self):
+        html = (ROOT / "web" / "legacy.html").read_text(encoding="utf-8")
+        self.assertIn("IW61x", html)
+        self.assertIn("'/api/legacy/' + input.slice(5)", html)
+        self.assertIn('src="/vendor/chart.umd-4.4.1.min.js"', html)
+        self.assertNotIn("PIXI-9377-S", html)
 
     def test_schema_declares_normalized_tables(self):
         schema = (ROOT / "schema.sql").read_text(encoding="utf-8")
-        for table in [
-            "test_results",
-            "test_measurements",
-            "upload_batches",
-            "data_quality_issues",
-            "alignment_targets",
-        ]:
+        for table in ["test_results", "test_measurements", "upload_batches", "data_quality_issues",
+                      "alignment_targets", "app_users", "app_sessions"]:
             self.assertIn(f"CREATE TABLE IF NOT EXISTS {table}", schema)
 
     def test_desktop_uploader_dependencies_are_installable(self):

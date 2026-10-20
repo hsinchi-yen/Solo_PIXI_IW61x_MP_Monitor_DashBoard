@@ -14,6 +14,7 @@ import time
 from contextlib import contextmanager
 
 import psycopg2
+import psycopg2.extras
 from psycopg2.pool import ThreadedConnectionPool
 
 import config
@@ -27,7 +28,7 @@ _pool_lock = threading.Lock()
 _slots = threading.BoundedSemaphore(config.DB_POOL_MAX)
 
 
-class TimedCursor(psycopg2.extensions.cursor):
+class _Timed:
     """Logs statements slower than SLOW_QUERY_MS."""
 
     def execute(self, query, vars=None):
@@ -38,6 +39,14 @@ class TimedCursor(psycopg2.extensions.cursor):
             ms = (time.perf_counter() - t0) * 1000
             if ms >= config.SLOW_QUERY_MS:
                 log.warning("slow query %.0f ms: %s", ms, " ".join(str(query).split())[:300])
+
+
+class TimedCursor(_Timed, psycopg2.extensions.cursor):
+    pass
+
+
+class _TimedDictCursor(_Timed, psycopg2.extras.RealDictCursor):
+    pass
 
 
 def get_connection(timeout: int = 5, database_url: str | None = None):
@@ -86,6 +95,34 @@ def db():
             except psycopg2.pool.PoolError:
                 pass
         _slots.release()
+
+
+def connect():
+    """A dedicated connection for long work that holds a session advisory lock; the caller closes it."""
+    return psycopg2.connect(DATABASE_URL, connect_timeout=5, cursor_factory=TimedCursor)
+
+
+def _dict_cursor(conn):
+    return conn.cursor(cursor_factory=_TimedDictCursor)
+
+
+def fetch_all(conn, sql, params=None):
+    with _dict_cursor(conn) as cur:
+        cur.execute(sql, params)
+        return [dict(r) for r in cur.fetchall()]
+
+
+def fetch_one(conn, sql, params=None):
+    with _dict_cursor(conn) as cur:
+        cur.execute(sql, params)
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+
+def execute(conn, sql, params=None):
+    with conn.cursor() as cur:
+        cur.execute(sql, params)
+        return cur.rowcount
 
 
 def close_pool():

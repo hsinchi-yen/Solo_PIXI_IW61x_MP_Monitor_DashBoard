@@ -28,10 +28,19 @@ def parse_iw61x_log_file(filepath: str | os.PathLike, work_order_override: str |
     path = Path(filepath)
     with path.open("r", encoding="utf-8", errors="replace") as handle:
         content = handle.read()
+    return parse_iw61x_content(content, path.name, str(path.parent), work_order_override, source_file=str(path))
 
+
+def parse_iw61x_content(
+    content: str,
+    filename: str,
+    folder_path: str = "",
+    work_order_override: str | None = None,
+    source_file: str | None = None,
+) -> ParsedResult:
+    """Parse one run's log text. `filename` carries the legacy name metadata (date, MACs, result);
+    `folder_path` is only used to resolve the work order when there is no override."""
     file_hash = compute_file_hash(content)
-    filename = path.name
-    folder_path = str(path.parent)
     file_info = parse_filename(filename)
 
     package_name = _header_value(content, "Package Name")
@@ -99,7 +108,7 @@ def parse_iw61x_log_file(filepath: str | os.PathLike, work_order_override: str |
         warnings=warnings,
         raw_log=content,
         file_hash=file_hash,
-        source_file=str(path)
+        source_file=source_file or filename
     )
 
 
@@ -315,6 +324,11 @@ def _find_rate(tokens: list[str]) -> str | None:
 
 
 def _wifi_standard(tokens: list[str], frequency: int | None, raw_tail: str) -> str | None:
+    # Legacy rates first: their step text also says "NON HT", which must not read as 11n.
+    if any(token.startswith("CCK") for token in tokens):
+        return "11b"
+    if any(token.startswith("OFDM") for token in tokens):
+        return "11g" if frequency and frequency < 3000 else "11a"
     joined = " ".join(tokens)
     if "HE_SU" in raw_tail or "HE SU" in joined:
         return "11ax"
@@ -322,10 +336,6 @@ def _wifi_standard(tokens: list[str], frequency: int | None, raw_tail: str) -> s
         return "11ac"
     if "HT" in joined:
         return "11n"
-    if any(token.startswith("CCK") for token in tokens):
-        return "11b"
-    if any(token.startswith("OFDM") for token in tokens):
-        return "11g" if frequency and frequency < 3000 else "11a"
     return None
 
 
