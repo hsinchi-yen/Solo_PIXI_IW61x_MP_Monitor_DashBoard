@@ -122,6 +122,29 @@ IW416 is intentionally out of scope for this release until representative IW416 
   form because browsers do not preserve the source folder name.
 - ZIP uploads may infer Work Order from their internal folder structure.
 - Duplicate files are skipped by SHA-256 content hash.
+- Browser uploads need a signed-in account. Each upload is recorded in
+  `upload_batches` (the desktop uploader too), and its data-quality issues carry
+  that batch id.
+
+## Accounts and Permissions
+
+Viewing the dashboard needs no sign-in. Everything that changes data or exposes
+raw logs does:
+
+| Role | Who | Can |
+|---|---|---|
+| Administrator | `ADMIN_USER` / `ADMIN_PASS` from `.env` | DB Tweak (delete with confirmation), alignment targets, reparse, uploader accounts, plus everything an uploader can do |
+| Uploader | accounts in `app_users`, created by the administrator (`POST /api/admin/users`) | Browser log upload, raw-log download |
+
+- Sign in with `POST /api/auth/login`; send the token in the `X-Tweak-Token`
+  header. Sessions are stored in the database (only a SHA-256 of each token),
+  expire after `SESSION_TTL_HOURS` (default 8), and end when the administrator
+  password changes or an uploader is disabled.
+- **Set `ADMIN_PASS` in `.env` on any shared server**; the API logs a warning
+  while the built-in default is in use.
+- Deletes require `confirm=DELETE`. Account changes, alignment targets,
+  deletes, reparse and uploads are recorded in `account_audit`; sign-ins in
+  `auth_log`.
 
 ## Local AI Summary
 

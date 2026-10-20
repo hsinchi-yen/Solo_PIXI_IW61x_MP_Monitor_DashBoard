@@ -7,6 +7,7 @@
 <link rel="icon" href="data:,">
 <script src="/static/vendor/chart.umd.min.js"></script>
 <script src="/static/vendor/marked.min.js"></script>
+<script src="/static/vendor/purify-3.1.6.min.js"></script>
 <style>
 /* ─── Apple Dark Mode CSS ─────────────────────────────────────────────────── */
 :root {
@@ -1075,6 +1076,12 @@ body::before {
       box-shadow: 0 20px 40px rgba(0,0,0,0.4); transform: translateY(20px); transition: transform 0.3s;
     }
     .ai-modal-overlay.show .ai-modal-content { transform: translateY(0); }
+    #login-modal .ai-modal-content { max-width: 380px; padding: 20px; }
+    .load-error {
+      display: none; align-items: center; gap: 12px; margin-bottom: 14px; padding: 10px 14px;
+      border: 1px solid var(--red); border-radius: var(--radius); color: var(--red);
+      background: rgba(255,69,58,.08); font-size: 13px;
+    }
     .ai-modal-header { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
     .ai-modal-title { font-size: 16px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
     .ai-modal-close { background: transparent; border: none; color: var(--muted); font-size: 20px; cursor: pointer; }
@@ -1713,7 +1720,8 @@ body::before {
       <span id="term-product-label">PRODUCT: —</span>
       <span class="term-sep">│</span>
       <span id="term-alert-label" class="term-alert-normal">NORMAL</span>
-      <span class="term-hint">[ Click or press any key to skip ]</span>
+      <span class="term-hint">[ Esc or click outside to close ]</span>
+      <button class="ai-modal-close" type="button" onclick="closeTerminalReport(true)" title="Close">×</button>
     </div>
     <div class="terminal-body" id="term-body">
       <div id="term-content"></div>
@@ -1723,6 +1731,27 @@ body::before {
       <span id="term-status">● GENERATING...</span>
       <span id="term-countdown"></span>
     </div>
+  </div>
+</div>
+
+<!-- Sign-in (upload, raw-log download, alignment targets) -->
+<div class="ai-modal-overlay" id="login-modal">
+  <div class="ai-modal-content">
+    <h3 style="margin-bottom:6px;font-size:17px">🔐 Sign in</h3>
+    <div id="loginModalReason" style="font-size:13px;color:var(--text2);margin-bottom:14px"></div>
+    <div class="tweak-form-row">
+      <label for="loginModalUser">Username</label>
+      <input type="text" id="loginModalUser" autocomplete="username">
+    </div>
+    <div class="tweak-form-row">
+      <label for="loginModalPass">Password</label>
+      <input type="password" id="loginModalPass" autocomplete="current-password">
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="tweak-btn secondary" type="button" id="btnLoginModalCancel">Cancel</button>
+      <button class="tweak-btn primary" type="button" id="btnLoginModalOk" style="width:auto;margin-top:0">Sign In</button>
+    </div>
+    <div id="loginModalMsg" style="margin-top:10px;font-size:13px;color:var(--red);display:none"></div>
   </div>
 </div>
 
@@ -1754,7 +1783,7 @@ body::before {
 const API_BASE = '';  // same-origin — FastAPI serves this HTML
 
 /* ═══ Navigation ═════════════════════════════════════════════════════════ */
-const navLinks = document.querySelectorAll('.sidebar nav a');
+const navLinks = document.querySelectorAll('.sidebar nav a[data-page]');
 navLinks.forEach(link => {
     link.addEventListener('click', e => {
         e.preventDefault();
@@ -1815,9 +1844,135 @@ function setActivePage(page, { reload = true } = {}) {
     return reload ? loadPageData(page) : Promise.resolve();
 }
 
-async function fetchJson(path) {
-    const response = await fetch(path);
-    return response.json();
+function setApiStatus(ok) {
+    const el = document.getElementById('api-status');
+    if (el) {
+        el.className = `badge ${ok ? 'badge-green' : 'badge-red'}`;
+        el.textContent = ok ? 'API: online' : 'API: offline';
+    }
+    if (ok) {
+        const ts = document.getElementById('last-refresh');
+        if (ts) ts.textContent = `Data updated ${new Date().toTimeString().slice(0, 8)}`;
+    }
+}
+
+function apiErrorMessage(body, status) {
+    return (body && (body.error || body.detail)) || `HTTP ${status}`;
+}
+
+async function fetchJson(path, options = {}) {
+    let response;
+    try {
+        response = await fetch(path, options);
+    } catch (e) {
+        setApiStatus(false);
+        throw e;
+    }
+    let body = null;
+    try { body = await response.json(); } catch (_) { body = null; }
+    if (!response.ok) {
+        if (response.status >= 500) setApiStatus(false);
+        if (response.status === 401) clearSession();
+        const err = new Error(apiErrorMessage(body, response.status));
+        err.status = response.status;
+        err.body = body;
+        throw err;
+    }
+    setApiStatus(true);
+    return body;
+}
+
+/* ═══ Session (administrator or uploader) ════════════════════════════════ */
+const SESSION_KEY = 'iw-session';
+function getSession() {
+    try { return JSON.parse(sessionStorage.getItem(SESSION_KEY)) || null; } catch (_) { return null; }
+}
+function setSession(session) {
+    try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(session)); } catch (_) { /* private mode */ }
+    tweakToken = session && session.role === 'admin' ? session.token : null;
+}
+function clearSession() {
+    try { sessionStorage.removeItem(SESSION_KEY); } catch (_) { /* private mode */ }
+    tweakToken = null;
+}
+function authHeaders(extra = {}) {
+    const session = getSession();
+    return session ? { ...extra, 'X-Tweak-Token': session.token } : { ...extra };
+}
+async function signIn(username, password) {
+    const data = await fetchJson('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+    });
+    setSession({ token: data.token, role: data.role, username: data.username });
+    return data;
+}
+
+/* Resolves with the session, asking for a sign-in when needed; null when cancelled. */
+function requireSession(role = 'any', reason = '') {
+    const session = getSession();
+    if (session && (role === 'any' || session.role === role)) return Promise.resolve(session);
+    return new Promise(resolve => {
+        const modal = document.getElementById('login-modal');
+        const msg = document.getElementById('loginModalMsg');
+        const user = document.getElementById('loginModalUser');
+        const pass = document.getElementById('loginModalPass');
+        document.getElementById('loginModalReason').textContent =
+            reason || (role === 'admin' ? 'Administrator sign-in required.' : 'Please sign in.');
+        msg.style.display = 'none';
+        pass.value = '';
+        modal.classList.add('show');
+        user.focus();
+        const finish = result => {
+            modal.classList.remove('show');
+            document.getElementById('btnLoginModalOk').onclick = null;
+            document.getElementById('btnLoginModalCancel').onclick = null;
+            pass.onkeydown = null;
+            resolve(result);
+        };
+        const submit = async () => {
+            try {
+                const data = await signIn(user.value.trim(), pass.value);
+                if (role !== 'any' && data.role !== role) {
+                    msg.textContent = 'This account cannot do this. Please sign in as an administrator.';
+                    msg.style.display = 'block';
+                    return;
+                }
+                finish(getSession());
+            } catch (e) {
+                msg.textContent = e.message;
+                msg.style.display = 'block';
+            }
+        };
+        document.getElementById('btnLoginModalOk').onclick = submit;
+        document.getElementById('btnLoginModalCancel').onclick = () => finish(null);
+        pass.onkeydown = e => { if (e.key === 'Enter') submit(); };
+    });
+}
+
+async function downloadRawLog(id) {
+    if (!await requireSession('any', 'Sign in to download raw logs.')) return;
+    try {
+        const response = await fetch(`/api/tweak/raw-log/${id}`, { headers: authHeaders() });
+        if (response.status === 401) { clearSession(); return downloadRawLog(id); }
+        if (!response.ok) {
+            let body = null; try { body = await response.json(); } catch (_) { /* text */ }
+            throw new Error(apiErrorMessage(body, response.status));
+        }
+        const disposition = response.headers.get('Content-Disposition') || '';
+        const name = (disposition.match(/filename="([^"]+)"/) || [])[1] || `record_${id}.txt`;
+        const url = URL.createObjectURL(await response.blob());
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (e) {
+        alert('Download failed: ' + e.message);
+    }
 }
 
 function getFilter() {
@@ -2153,10 +2308,7 @@ function stopAutoRotation() {
 }
 
 function scheduleIdleRotation() {
-    if (automationState.idleTimerId) clearTimeout(automationState.idleTimerId);
-    automationState.idleTimerId = setTimeout(() => {
-        startAutoRotation();
-    }, IDLE_ROTATION_DELAY_MS);
+    // Page rotation is switched off (decision Q7); only the hourly idle data refresh remains.
 }
 
 async function runAutoRotationStep(index, token) {
@@ -2221,7 +2373,7 @@ function checkHourlyIdleRefresh() {
     if (automationState.lastRefreshHourKey === hourKey) return;
 
     automationState.lastRefreshHourKey = hourKey;
-    runIdleRefresh();
+    runIdleRefresh().catch(e => console.warn('idle refresh failed', e));
 }
 
 function handleUserActivity(event) {
@@ -3432,14 +3584,18 @@ function initAlignPage() {
         const statusEl = document.getElementById('alignSaveStatus');
         statusEl.textContent = '💾 Saving…';
         try {
-            await fetch(`${API_BASE}/api/alignment-targets`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
-            });
-            statusEl.textContent = `✓ Saved to DB — ${inputs.length} WO(s)`;
+            if (!await requireSession('admin', 'Saving alignment targets needs an administrator.')) {
+                statusEl.textContent = '⚠️ Not saved to DB (sign-in cancelled) — stored locally only';
+            } else {
+                await fetchJson(`${API_BASE}/api/alignment-targets`, {
+                    method: 'POST',
+                    headers: authHeaders({ 'Content-Type': 'application/json' }),
+                    body: JSON.stringify(payload),
+                });
+                statusEl.textContent = `✓ Saved to DB — ${inputs.length} WO(s)`;
+            }
         } catch (e) {
-            statusEl.textContent = '⚠️ DB save failed — stored locally only';
+            statusEl.textContent = `⚠️ DB save failed (${e.message}) — stored locally only`;
         }
         setTimeout(() => { statusEl.textContent = ''; }, 3500);
         loadDataAlign();
@@ -3458,15 +3614,18 @@ function initAlignPage() {
         statusEl.textContent = '⊗ Clearing…';
         try {
             if (Object.keys(payload).length > 0) {
-                await fetch(`${API_BASE}/api/alignment-targets`, {
+                if (!await requireSession('admin', 'Clearing alignment targets needs an administrator.')) {
+                    throw new Error('sign-in cancelled');
+                }
+                await fetchJson(`${API_BASE}/api/alignment-targets`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: authHeaders({ 'Content-Type': 'application/json' }),
                     body: JSON.stringify(payload),
                 });
             }
             statusEl.textContent = 'All targets cleared (DB + local)';
         } catch (e) {
-            statusEl.textContent = 'Cleared locally (DB clear failed)';
+            statusEl.textContent = `Cleared locally (DB clear failed: ${e.message})`;
         }
         setTimeout(() => { statusEl.textContent = ''; }, 3000);
         loadDataAlign();
@@ -3492,6 +3651,7 @@ const tweakState = {
 };
 
 function handleTweakUnauthorized() {
+    clearSession();
     document.getElementById('btnTweakLogout').click();
 }
 
@@ -3622,25 +3782,19 @@ document.getElementById('btnTweakLogin').addEventListener('click', async () => {
     const msg = document.getElementById('tweakLoginMsg');
     if (!user || !pass) { msg.textContent = 'Please enter both fields.'; msg.style.display = 'block'; return; }
     try {
-        const r = await fetch('/api/tweak/login', {
-            method: 'POST',
-            headers: {'Content-Type':'application/json'},
-            body: JSON.stringify({username: user, password: pass})
-        });
-        const data = await r.json();
-        if (data.ok) {
-            tweakToken = data.token;
+        const data = await signIn(user, pass);
+        if (data.role !== 'admin') {
+            msg.textContent = 'DB Tweak is for the administrator. Uploader accounts can upload logs and download raw logs.';
+            msg.style.display = 'block';
+        } else {
             document.getElementById('tweakLogin').style.display = 'none';
             document.getElementById('tweakPanel').style.display = 'block';
             resetTweakPanelState();
             await loadTweakFilterOptions();
             await loadTweakRecords();
-        } else {
-            msg.textContent = data.message || 'Login failed';
-            msg.style.display = 'block';
         }
     } catch(e) {
-        msg.textContent = 'Connection error: ' + e.message;
+        msg.textContent = e.message;
         msg.style.display = 'block';
     }
 });
@@ -3651,7 +3805,9 @@ document.getElementById('tweakPass').addEventListener('keydown', e => {
 });
 
 document.getElementById('btnTweakLogout').addEventListener('click', () => {
-    tweakToken = null;
+    const session = getSession();
+    if (session) fetch('/api/auth/logout', { method: 'POST', headers: authHeaders() }).catch(() => {});
+    clearSession();
     document.getElementById('tweakPanel').style.display = 'none';
     document.getElementById('tweakLogin').style.display = 'block';
     document.getElementById('tweakUser').value = '';
@@ -3724,6 +3880,7 @@ document.getElementById('btnTweakDeleteScope').addEventListener('click', async (
     if (!confirm(`⚠️ Delete ALL records for ${scopeLabel}?\nThis cannot be undone.`)) return;
     try {
         const params = getTweakFilterParams(false);
+        params.set('confirm', 'DELETE');
         const r = await fetch(`/api/tweak/delete-scope?${params.toString()}`, {
             method: 'DELETE',
             headers: {'X-Tweak-Token': tweakToken}
@@ -3796,7 +3953,7 @@ async function loadTweakRecords() {
 async function tweakDelete(id, mac) {
     if (!confirm(`Delete record #${id} (MAC: ${mac})?`)) return;
     try {
-        const r = await fetch(`/api/tweak/records/${id}`, {
+        const r = await fetch(`/api/tweak/records/${id}?confirm=DELETE`, {
             method: 'DELETE', headers: {'X-Tweak-Token': tweakToken}
         });
         if (r.status === 401) { handleTweakUnauthorized(); return; }
@@ -3813,24 +3970,18 @@ async function tweakDelete(id, mac) {
 }
 
 function tweakDownload(id) {
-    const a = document.createElement('a');
-    a.href = `/api/tweak/raw-log/${id}?token=${encodeURIComponent(tweakToken)}`;
-    a.download = '';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+    return downloadRawLog(id);
 }
 
 function downloadFailLog(id) {
-    const a = document.createElement('a');
-    a.href = `/api/raw-log/${id}`;
-    a.download = '';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+    return downloadRawLog(id);
 }
 
 function loadDBTweak() {
+    const session = getSession();
+    tweakToken = session && session.role === 'admin' ? session.token : null;
+    document.getElementById('tweakLogin').style.display = tweakToken ? 'none' : 'block';
+    document.getElementById('tweakPanel').style.display = tweakToken ? 'block' : 'none';
     if (tweakToken) {
         loadTweakFilterOptions();
         loadTweakRecords();
@@ -3849,9 +4000,29 @@ const pageLoaders = {
     dbtweak: loadDBTweak,
     dataalign: loadDataAlign,
 };
-function loadPageData(page) {
-    if (!pageLoaders[page]) return Promise.resolve();
-    return pageLoaders[page]();
+function showLoadError(page, error) {
+    let el = document.getElementById('load-error');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'load-error';
+        el.className = 'load-error';
+        document.querySelector('.main').prepend(el);
+    }
+    if (!error) { el.style.display = 'none'; return; }
+    el.innerHTML = `⚠️ Could not load data (${esc(error.message || String(error))}). <button class="tweak-btn secondary" type="button">Retry</button>`;
+    el.querySelector('button').onclick = () => loadPageData(page);
+    el.style.display = 'flex';
+}
+
+async function loadPageData(page) {
+    if (!pageLoaders[page]) return;
+    try {
+        await pageLoaders[page]();
+        showLoadError(page, null);
+    } catch (e) {
+        console.error(`load ${page} failed`, e);
+        showLoadError(page, e);
+    }
 }
 
 /* ═══ Utility ════════════════════════════════════════════════════════════ */
@@ -3969,6 +4140,11 @@ function initIwUpload() {
         files.forEach(file => body.append('files', file));
         if (workOrder) body.append('work_order', workOrder);
 
+        if (!await requireSession('any', 'Sign in to upload logs.')) {
+            status.textContent = 'Upload cancelled: sign-in required.';
+            status.style.color = 'var(--red)';
+            return;
+        }
         button.disabled = true;
         const startedAt = Date.now();
         status.textContent = `Uploading and processing ${files.length} selected file(s)… 0s`;
@@ -3978,9 +4154,7 @@ function initIwUpload() {
             status.textContent = `Uploading and processing ${files.length} selected file(s)… ${seconds}s`;
         }, 1000);
         try {
-            const response = await fetch(`${API_BASE}/api/upload/`, { method: 'POST', body });
-            const report = await response.json();
-            if (!response.ok) throw new Error(report.detail || `HTTP ${response.status}`);
+            const report = await fetchJson(`${API_BASE}/api/upload/`, { method: 'POST', body, headers: authHeaders() });
             renderSummaryCards('iwUploadSummary', [
                 { label: 'Total Files', value: safeNumber(report.total_files), color: 'blue' },
                 { label: 'Uploaded', value: safeNumber(report.uploaded), color: 'green' },
@@ -4143,6 +4317,7 @@ initDashboard();
     }
 
     function parseTerminalSegments(text) {
+      text = text || 'This report could not be generated. Please try again later.';
       const segments = [];
       const lines = text.split('\n');
       
@@ -4208,6 +4383,12 @@ initDashboard();
 
     let _termLoadingInterval = null, _termTimer = null, _termCountdown = null, _termPause = null, _termOnDone = null, _termSkipBound = null;
 
+    function _termCloseOnEscOrBackdrop(e) {
+      if (e.type === 'keydown' ? e.key === 'Escape' : e.target === document.getElementById('terminal-modal')) {
+        closeTerminalReport(true);
+      }
+    }
+
     function closeTerminalReport(skipped) {
       if (_termTimer)           { clearInterval(_termTimer);           _termTimer           = null; }
       if (_termPause)           { clearTimeout(_termPause);            _termPause           = null; }
@@ -4219,8 +4400,9 @@ initDashboard();
         _termSkipBound = null;
       }
       document.getElementById('terminal-modal').classList.remove('show');
+      // Closing by hand (Esc, ×, backdrop) ends the report; "next" continues to the other language.
       const cb = _termOnDone; _termOnDone = null;
-      if (cb) cb(skipped);
+      if (cb && !skipped) cb(skipped);
     }
 
     function openTerminalWithLoading(wo, model, yieldPct) {
@@ -4264,9 +4446,9 @@ initDashboard();
       }, 500);
 
       _termOnDone    = null;
-      _termSkipBound = () => closeTerminalReport(true);
-      document.getElementById('terminal-modal').addEventListener('click', _termSkipBound, { once: true });
-      document.addEventListener('keydown', _termSkipBound, { once: true });
+      _termSkipBound = _termCloseOnEscOrBackdrop;
+      document.getElementById('terminal-modal').addEventListener('click', _termSkipBound);
+      document.addEventListener('keydown', _termSkipBound);
     }
 
     function startTerminalContent(summary, onDone) {
@@ -4295,9 +4477,9 @@ initDashboard();
       body.scrollTop       = 0;
 
       _termOnDone    = onDone;
-      _termSkipBound = () => closeTerminalReport(true);
-      document.getElementById('terminal-modal').addEventListener('click', _termSkipBound, { once: true });
-      document.addEventListener('keydown', _termSkipBound, { once: true });
+      _termSkipBound = _termCloseOnEscOrBackdrop;
+      document.getElementById('terminal-modal').addEventListener('click', _termSkipBound);
+      document.addEventListener('keydown', _termSkipBound);
 
       const segments = parseTerminalSegments(summary);
       let segIdx = 0, charIdx = 0, currentSpan = null;
@@ -4306,18 +4488,17 @@ initDashboard();
         clearInterval(_termTimer); _termTimer = null;
         cursorEl.className   = 'term-cursor done';
         statusEl.textContent = '✔ REPORT COMPLETE';
-        let remaining = 30;
-        countEl.textContent = `Auto-close in ${remaining}s  (click or press any key to skip)`;
-        _termCountdown = setInterval(() => {
-          remaining--;
-          if (remaining > 0) {
-            countEl.textContent = `Auto-close in ${remaining}s  (click or press any key to skip)`;
-          } else {
-            countEl.textContent = '';
-            clearInterval(_termCountdown); _termCountdown = null;
-          }
-        }, 1000);
-        _termPause = setTimeout(() => closeTerminalReport(false), 30000);
+        countEl.textContent = '';
+        if (_termOnDone) {
+          const next = document.createElement('button');
+          next.type = 'button';
+          next.className = 'tweak-btn secondary';
+          next.textContent = '中文 ▶';
+          next.onclick = () => closeTerminalReport(false);
+          countEl.appendChild(next);
+        } else {
+          countEl.textContent = 'Esc or click outside to close';
+        }
       }
 
       if (_termTimer) { clearInterval(_termTimer); _termTimer = null; }
@@ -4358,7 +4539,7 @@ initDashboard();
     }
 
     async function openLatestWoTerminalReport() {
-      if (!window.llmConnected) return;
+      if (!window.llmConnected) { alert('The AI service is offline. Please try again later.'); return; }
 
       let woRows = Array.isArray(dashboardState.workorders.rows) && dashboardState.workorders.rows.length > 0
         ? dashboardState.workorders.rows
@@ -4376,7 +4557,7 @@ initDashboard();
         : null;
       if (!latest) { alert('No work order data available.'); return; }
 
-      openTerminalWithLoading(latest.work_order, 'PIXI-9377-S', latest.yield_pct || 0);
+      openTerminalWithLoading(latest.work_order, 'IW611', latest.yield_pct || 0);
 
       const navItem = document.getElementById('nav-ai-report');
       if (navItem) navItem.style.opacity = '0.5';
@@ -4437,7 +4618,7 @@ initDashboard();
     // ── Carousel shortcut: data already available, skip loading phase ─────────
     function openTerminalReport(wo, yieldPct, summary, onDone) {
       closeTerminalReport(true);
-      _setupTerminalTitlebar(wo, 'PIXI-9377-S', yieldPct);
+      _setupTerminalTitlebar(wo, 'IW611', yieldPct);
       document.getElementById('terminal-modal').classList.add('show');
       document.getElementById('term-body').scrollTop = 0;
       startTerminalContent(summary, onDone);
@@ -4496,15 +4677,17 @@ initDashboard();
         const res  = await fetchWithTimeout(`${API_BASE}/api/workorders/${encodeURIComponent(wo)}/ai-summary?lang=${lang}`);
         const data = await res.json();
         if (res.ok && data.summary) {
-          result.innerHTML = typeof marked !== 'undefined' ? marked.parse(data.summary) : data.summary.replace(/\n/g,'<br>');
+          result.innerHTML = typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined'
+            ? DOMPurify.sanitize(marked.parse(data.summary))
+            : esc(data.summary).replace(/\n/g,'<br>');
         } else {
-          result.innerHTML = `<span style="color:var(--red);">Error: ${data.detail || data.error || 'Analysis failed'}</span>`;
+          result.innerHTML = `<span style="color:var(--red);">Error: ${esc(data.error || data.detail || 'Analysis failed')}</span>`;
         }
       } catch(e) {
         if (e.name === 'AbortError') {
           result.innerHTML = `<span style="color:var(--red);">LLM did not respond within 180 seconds (timeout).</span>`;
         } else {
-          result.innerHTML = `<span style="color:var(--red);">Request failed: ${e.message}</span>`;
+          result.innerHTML = `<span style="color:var(--red);">Request failed: ${esc(e.message)}</span>`;
         }
       } finally {
         loading.style.display = 'none';
@@ -4567,7 +4750,6 @@ initDashboard();
 
   setTimeout(checkLlmStatus, 500);
   setInterval(checkLlmStatus, 30000);
-  startCarouselScheduler();
 </script>
 </body>
 </html>

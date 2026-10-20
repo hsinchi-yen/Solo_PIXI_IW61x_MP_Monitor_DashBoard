@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import tempfile
 import zipfile
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 
+import auth
 from db import get_connection
 from ingestion.postgres import PostgresRunRepository
 from ingestion.service import ingest_paths
@@ -14,9 +16,12 @@ router = APIRouter(prefix="/api/upload", tags=["upload"])
 
 @router.post("/")
 async def upload_logs(
+    request: Request,
     files: list[UploadFile] = File(...),
-    work_order: str | None = Form(default=None),
+    work_order: str | None = Form(default=None, max_length=64),
+    user=Depends(auth.current_user),
 ):
+    """Upload .txt logs or .zip archives. Any signed-in account (administrator or uploader)."""
     if not files:
         raise HTTPException(status_code=400, detail="No files uploaded")
     if not (work_order or "").strip() and any(
@@ -44,17 +49,35 @@ async def upload_logs(
             elif target.suffix.lower() == ".txt":
                 collected.append(target)
 
-        with get_connection() as conn:
-            repo = PostgresRunRepository(conn)
-            report = ingest_paths(
-                collected,
-                repo=repo,
-                work_order_override=(work_order or "").strip() or None,
-                source="api",
-            )
-            _save_batch(conn, report, work_order, "api")
-            conn.commit()
-        return report.as_dict()
+        override = (work_order or "").strip() or None
+        # Parsing and DB writes are blocking work; keep them off the event loop.
+        batch_id, report = await asyncio.to_thread(_ingest, request, user, collected, override)
+        result = report.as_dict()
+        result["batch_id"] = batch_id
+        for item in result.get("files", []):
+            if item.get("source_file"):
+                item["source_file"] = Path(item["source_file"]).name
+        return result
+
+
+
+def _ingest(request: Request, user: dict, collected: list[Path], override: str | None):
+    conn = get_connection()
+    try:
+        repo = PostgresRunRepository(conn)
+        batch_id = repo.begin_batch(override, "api")
+        report = ingest_paths(collected, repo=repo, work_order_override=override, source="api")
+        repo.finish_batch(report)
+        auth.audit(conn, request, user["username"], "upload", override,
+                   {"batch_id": batch_id, "files": report.total_files, "uploaded": report.uploaded,
+                    "duplicates": report.duplicates, "rejected": report.rejected})
+        conn.commit()
+        return batch_id, report
+    except BaseException:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def _extract_safe_zip(zip_path: Path, dest: Path) -> list[Path]:
@@ -77,14 +100,3 @@ def _extract_safe_zip(zip_path: Path, dest: Path) -> list[Path]:
             if target.suffix.lower() == ".txt":
                 extracted.append(target)
     return extracted
-
-
-def _save_batch(conn, report, work_order: str | None, source: str) -> None:
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO upload_batches (total_files, uploaded, duplicates, rejected, warnings, work_order, upload_source)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            """,
-            (report.total_files, report.uploaded, report.duplicates, report.rejected, report.warnings, work_order, source),
-        )

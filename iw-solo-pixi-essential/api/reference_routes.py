@@ -1,65 +1,30 @@
 from __future__ import annotations
 
 import tempfile
-import time
 from collections import defaultdict
 from pathlib import Path
 
-from fastapi import APIRouter, Body, Header, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, Query, Request
 from fastapi.responses import PlainTextResponse
 
-from admin_routes import ADMIN_PASS, ADMIN_USER, TOKEN_TTL_SEC, _require_token, _sign
-from db import get_connection
+import auth
+from admin_routes import LoginBody, LoginResult, login, require_delete_confirmation
+from db import db
+from errors import Msg, bad_request, not_found
 from parsers.iw61x import parse_iw61x_log_file
-from query_service import fetch_filter_options, fetch_records
+from query_service import fetch_filter_options, fetch_records, sql_filters
+from scope import Scope, file_name
 
 
 router = APIRouter(prefix="/api", tags=["reference-dashboard"])
 
 
-def _where(
-    work_order: str | None = None,
-    year: int | None = None,
-    month: int | None = None,
-    week: int | None = None,
-    day: str | None = None,
-    alias: str = "",
-) -> tuple[str, list]:
-    column = lambda name: f"{alias}.{name}" if alias else name
-    clauses: list[str] = []
-    params: list = []
-    if work_order:
-        clauses.append(f"{column('work_order')} = %s")
-        params.append(work_order)
-    if year is not None:
-        clauses.append(f"EXTRACT(YEAR FROM {column('start_time')}) = %s")
-        params.append(year)
-    if month is not None:
-        clauses.append(f"EXTRACT(MONTH FROM {column('start_time')}) = %s")
-        params.append(month)
-    if week is not None:
-        clauses.append(f"EXTRACT(WEEK FROM {column('start_time')}) = %s")
-        params.append(week)
-    if day:
-        clauses.append(f"DATE({column('start_time')}) = %s")
-        params.append(day)
-    return ("WHERE " + " AND ".join(clauses) if clauses else ""), params
-
-
-def _token(value: str | None) -> None:
-    _require_token(value)
-
-
 @router.get("/pass-fail-split")
 def pass_fail_split(
-    work_order: str | None = None,
-    year: int | None = None,
-    month: int | None = None,
-    week: int | None = None,
-    day: str | None = None,
+    scope: Scope = Depends(),
 ):
-    with get_connection() as conn:
-        rows = fetch_records(conn, work_order=work_order, year=year, month=month, week=week, day=day)
+    with db() as conn:
+        rows = fetch_records(conn, **scope.kw())
     grouped: dict[tuple[str, str], set[str]] = defaultdict(set)
     for row in rows:
         if row.mac1 and row.mac1_source != "unknown":
@@ -72,16 +37,16 @@ def pass_fail_split(
 
 
 @router.get("/monthly-count")
-def monthly_count(year: int | None = None, work_order: str | None = None):
+def monthly_count(year: int | None = Query(None, ge=2000, le=2100), work_order: str | None = Query(None, max_length=64)):
     target_year = year
-    with get_connection() as conn:
+    with db() as conn:
         with conn.cursor() as cur:
             if target_year is None:
                 cur.execute("SELECT MAX(EXTRACT(YEAR FROM start_time))::int FROM test_results")
                 target_year = cur.fetchone()[0]
             if target_year is None:
                 return {"year": None, "months": []}
-            params: list = [target_year]
+            params: list = [target_year, target_year + 1]
             work_clause = ""
             if work_order:
                 work_clause = "AND work_order = %s"
@@ -92,7 +57,7 @@ def monthly_count(year: int | None = None, work_order: str | None = None):
                     SELECT DISTINCT ON (work_order, mac1, EXTRACT(MONTH FROM start_time))
                            EXTRACT(MONTH FROM start_time)::int AS month, work_order, mac1, result
                     FROM test_results
-                    WHERE EXTRACT(YEAR FROM start_time) = %s
+                    WHERE start_time >= make_date(%s, 1, 1) AND start_time < make_date(%s, 1, 1)
                       AND mac1 IS NOT NULL AND mac1_source != 'unknown'
                       {work_clause}
                     ORDER BY work_order, mac1, EXTRACT(MONTH FROM start_time),
@@ -122,14 +87,14 @@ def monthly_count(year: int | None = None, work_order: str | None = None):
 
 
 @router.get("/config-analysis")
-def config_analysis(work_order: str | None = None):
-    with get_connection() as conn:
+def config_analysis(work_order: str | None = Query(None, max_length=64)):
+    with db() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
                 SELECT result, COUNT(*)
                 FROM test_results
-                WHERE (%s IS NULL OR work_order = %s)
+                WHERE (%s::text IS NULL OR work_order = %s)
                   AND result IN ('FAIL', 'STOP')
                   AND (fail_category = 'DeviceConfigure' OR fail_step_name IS NULL)
                 GROUP BY result ORDER BY COUNT(*) DESC
@@ -141,36 +106,20 @@ def config_analysis(work_order: str | None = None):
 
 @router.get("/fails")
 def fails(
-    work_order: str | None = None,
-    year: int | None = None,
-    month: int | None = None,
-    week: int | None = None,
-    day: str | None = None,
+    scope: Scope = Depends(),
     limit: int = Query(50, ge=1, le=5000),
 ):
-    with get_connection() as conn:
-        rows = fetch_records(
-            conn,
-            work_order=work_order,
-            year=year,
-            month=month,
-            week=week,
-            day=day,
-            limit=10000,
-        )
-    return [_public_row(row) for row in rows if row.result in {"FAIL", "STOP"}][:limit]
+    with db() as conn:
+        rows = fetch_records(conn, results=("FAIL", "STOP"), limit=limit, **scope.kw())
+    return [_public_row(row) for row in rows]
 
 
 @router.get("/test-duration")
 def test_duration(
-    work_order: str | None = None,
-    year: int | None = None,
-    month: int | None = None,
-    week: int | None = None,
-    day: str | None = None,
+    scope: Scope = Depends(),
 ):
-    with get_connection() as conn:
-        rows = fetch_records(conn, work_order=work_order, year=year, month=month, week=week, day=day)
+    with db() as conn:
+        rows = fetch_records(conn, **scope.kw())
     return [
         {"test_duration_sec": row.test_duration_sec, "result": row.result}
         for row in sorted(rows, key=lambda item: item.start_time)
@@ -179,8 +128,8 @@ def test_duration(
 
 
 @router.get("/mac-range")
-def mac_range(work_order: str | None = None):
-    with get_connection() as conn:
+def mac_range(work_order: str | None = Query(None, max_length=64)):
+    with db() as conn:
         rows = fetch_records(conn, work_order=work_order)
     grouped: dict[str, list] = defaultdict(list)
     for row in rows:
@@ -214,15 +163,11 @@ def mac_range(work_order: str | None = None):
 
 @router.get("/bt-metrics")
 def bt_metrics(
-    work_order: str | None = None,
-    year: int | None = None,
-    month: int | None = None,
-    week: int | None = None,
-    day: str | None = None,
+    scope: Scope = Depends(),
 ):
-    filter_where, params = _where(work_order, year, month, week, day, alias="tr")
+    filter_where, params = sql_filters(**scope.kw(), alias="tr")
     extra = filter_where.replace("WHERE", "AND", 1) if filter_where else ""
-    with get_connection() as conn:
+    with db() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 f"""
@@ -286,15 +231,11 @@ def bt_metrics(
 
 @router.get("/wifi-metrics")
 def wifi_metrics(
-    work_order: str | None = None,
-    year: int | None = None,
-    month: int | None = None,
-    week: int | None = None,
-    day: str | None = None,
+    scope: Scope = Depends(),
 ):
-    filter_where, params = _where(work_order, year, month, week, day, alias="tr")
+    filter_where, params = sql_filters(**scope.kw(), alias="tr")
     extra = filter_where.replace("WHERE", "AND", 1) if filter_where else ""
-    with get_connection() as conn:
+    with db() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 f"""
@@ -348,103 +289,101 @@ def wifi_metrics(
 
 @router.get("/calibration")
 def calibration(
-    work_order: str | None = None,
-    year: int | None = None,
-    month: int | None = None,
-    week: int | None = None,
-    day: str | None = None,
+    scope: Scope = Depends(),
 ):
-    return wifi_metrics(work_order, year, month, week, day)["xtal_data"]
+    return wifi_metrics(scope)["xtal_data"]
 
 
 @router.get("/alignment-targets")
 def alignment_targets():
-    with get_connection() as conn:
+    with db() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT work_order, target_total FROM alignment_targets ORDER BY work_order")
             return {row[0]: row[1] for row in cur.fetchall()}
 
 
 @router.post("/alignment-targets")
-def set_alignment_targets(payload: dict = Body(...)):
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            for work_order, target in payload.items():
-                if target is None or target == "":
-                    cur.execute("DELETE FROM alignment_targets WHERE work_order = %s", (work_order,))
-                else:
-                    cur.execute(
-                        """
-                        INSERT INTO alignment_targets (work_order, target_total, updated_at)
-                        VALUES (%s, %s, NOW())
-                        ON CONFLICT (work_order) DO UPDATE
-                        SET target_total = EXCLUDED.target_total, updated_at = NOW()
-                        """,
-                        (work_order, max(0, int(target))),
-                    )
-        conn.commit()
+def set_alignment_targets(request: Request, payload: dict = Body(...), admin=Depends(auth.require_admin)):
+    """{work_order: target_total}; an empty or null target removes it. Administrator only."""
+    changes = {}
+    for work_order, target in payload.items():
+        if not isinstance(work_order, str) or not work_order.strip() or len(work_order) > 64:
+            raise bad_request(Msg("Invalid work order.", "工單格式不正確。"), "invalid_target")
+        if target is None or target == "":
+            changes[work_order] = None
+            continue
+        try:
+            value = int(target)
+        except (TypeError, ValueError):
+            raise bad_request(Msg(f"Target for {work_order} must be a whole number.",
+                                  f"{work_order} 的目標數必須是整數。"), "invalid_target")
+        if not 0 <= value <= 10_000_000:
+            raise bad_request(Msg(f"Target for {work_order} is out of range.", f"{work_order} 的目標數超出範圍。"),
+                              "invalid_target")
+        changes[work_order] = value
+    with db() as conn, conn.cursor() as cur:
+        for work_order, value in changes.items():
+            if value is None:
+                cur.execute("DELETE FROM alignment_targets WHERE work_order = %s", (work_order,))
+            else:
+                cur.execute(
+                    """
+                    INSERT INTO alignment_targets (work_order, target_total, updated_at)
+                    VALUES (%s, %s, NOW())
+                    ON CONFLICT (work_order) DO UPDATE
+                    SET target_total = EXCLUDED.target_total, updated_at = NOW()
+                    """,
+                    (work_order, value),
+                )
+        auth.audit(conn, request, admin["username"], "set_alignment_targets", None, changes)
     return {"status": "ok"}
 
 
-@router.post("/tweak/login")
-def tweak_login(payload: dict = Body(...)):
-    if payload.get("username") != ADMIN_USER or payload.get("password") != ADMIN_PASS:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-    expires_at = int(time.time()) + TOKEN_TTL_SEC
-    return {"ok": True, "token": _sign({"sub": ADMIN_USER, "exp": expires_at}), "expires_at": expires_at}
+@router.post("/tweak/login", response_model=LoginResult, include_in_schema=False)
+def tweak_login(request: Request, body: LoginBody):
+    """The DB Tweak page signs in here; it is the same login as POST /api/auth/login."""
+    return login(request, body)
 
 
 @router.get("/tweak/filter-options")
-def tweak_filter_options(
-    work_order: str | None = None,
-    year: int | None = None,
-    month: int | None = None,
-    week: int | None = None,
-    day: str | None = None,
-    x_tweak_token: str | None = Header(default=None),
-):
-    _token(x_tweak_token)
-    with get_connection() as conn:
-        return fetch_filter_options(conn, work_order, year, month, week, day)
+def tweak_filter_options(scope: Scope = Depends(), _admin=Depends(auth.require_admin)):
+    with db() as conn:
+        return fetch_filter_options(conn, **scope.kw())
 
 
 @router.get("/tweak/records")
 def tweak_records(
-    work_order: str | None = None,
-    year: int | None = None,
-    month: int | None = None,
-    week: int | None = None,
-    day: str | None = None,
+    scope: Scope = Depends(),
     page: int = Query(1, ge=1),
-    page_size: str = "50",
-    x_tweak_token: str | None = Header(default=None),
+    page_size: str = Query("50", max_length=4, pattern=r"^(?i:all|\d{1,3})$"),
+    _admin=Depends(auth.require_admin),
 ):
-    _token(x_tweak_token)
-    where, params = _where(work_order, year, month, week, day)
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(f"SELECT COUNT(*) FROM test_results {where}", params)
-            total = cur.fetchone()[0]
-            size = None if page_size.lower() == "all" else max(1, min(int(page_size), 500))
-            total_pages = 1 if size is None and total else ((total + size - 1) // size if total else 0)
-            current_page = min(page, max(total_pages, 1))
-            paging = ""
-            query_params = list(params)
-            if size is not None:
-                paging = "LIMIT %s OFFSET %s"
-                query_params.extend([size, (current_page - 1) * size])
-            cur.execute(
-                f"""
-                SELECT id, mac1, mac2, work_order, DATE(start_time) AS unit_date,
-                       start_time, end_time, test_duration_sec, result, source_file,
-                       fail_step_name, fail_message, (raw_log IS NOT NULL AND raw_log != '') AS has_raw_log
-                FROM test_results {where}
-                ORDER BY start_time DESC, id DESC {paging}
-                """,
-                query_params,
-            )
-            columns = [desc[0] for desc in cur.description]
-            items = [dict(zip(columns, row)) for row in cur.fetchall()]
+    where, params = sql_filters(**scope.kw())
+    with db() as conn, conn.cursor() as cur:
+        cur.execute(f"SELECT COUNT(*) FROM test_results {where}", params)
+        total = cur.fetchone()[0]
+        size = None if page_size.lower() == "all" else max(1, min(int(page_size), 500))
+        total_pages = 1 if size is None and total else ((total + size - 1) // size if total else 0)
+        current_page = min(page, max(total_pages, 1))
+        paging = ""
+        query_params = list(params)
+        if size is not None:
+            paging = "LIMIT %s OFFSET %s"
+            query_params.extend([size, (current_page - 1) * size])
+        cur.execute(
+            f"""
+            SELECT id, mac1, mac2, work_order, DATE(start_time) AS unit_date,
+                   start_time, end_time, test_duration_sec, result, source_file,
+                   fail_step_name, fail_message, (raw_log IS NOT NULL AND raw_log != '') AS has_raw_log
+            FROM test_results {where}
+            ORDER BY start_time DESC, id DESC {paging}
+            """,
+            query_params,
+        )
+        columns = [desc[0] for desc in cur.description]
+        items = [dict(zip(columns, row)) for row in cur.fetchall()]
+    for item in items:
+        item["source_file"] = file_name(item["source_file"])
     return {
         "items": items,
         "total": total,
@@ -458,81 +397,79 @@ def tweak_records(
 
 @router.delete("/tweak/delete-scope")
 def tweak_delete_scope(
-    work_order: str | None = None,
-    year: int | None = None,
-    month: int | None = None,
-    week: int | None = None,
-    day: str | None = None,
-    x_tweak_token: str | None = Header(default=None),
+    request: Request,
+    scope: Scope = Depends(),
+    confirm: str = Query(""),
+    admin=Depends(auth.require_admin),
 ):
-    _token(x_tweak_token)
-    if not any((work_order, year, month, week, day)):
-        raise HTTPException(status_code=400, detail="At least one filter is required")
-    where, params = _where(work_order, year, month, week, day)
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(f"DELETE FROM test_results {where}", params)
-            deleted = cur.rowcount
-        conn.commit()
+    if not scope.any():
+        raise bad_request(Msg("At least one filter is required.", "至少要選一個篩選條件。"), "scope_required")
+    require_delete_confirmation(confirm)
+    where, params = sql_filters(**scope.kw())
+    with db() as conn, conn.cursor() as cur:
+        cur.execute(f"DELETE FROM test_results {where}", params)
+        deleted = cur.rowcount
+        auth.audit(conn, request, admin["username"], "delete_scope", None,
+                   {**{k: v for k, v in scope.kw().items() if v is not None}, "deleted": deleted})
     return {"deleted": deleted}
 
 
 @router.delete("/tweak/records/{record_id}")
-def tweak_delete_record(record_id: int, x_tweak_token: str | None = Header(default=None)):
-    _token(x_tweak_token)
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("DELETE FROM test_results WHERE id = %s", (record_id,))
-            deleted = cur.rowcount
-        conn.commit()
+def tweak_delete_record(record_id: int, request: Request, confirm: str = Query(""),
+                        admin=Depends(auth.require_admin)):
+    require_delete_confirmation(confirm)
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM test_results WHERE id = %s", (record_id,))
+        deleted = cur.rowcount
+        auth.audit(conn, request, admin["username"], "delete_record", str(record_id))
     return {"deleted": deleted, "id": record_id}
 
 
 @router.get("/tweak/raw-log/{record_id}")
-def tweak_raw_log(
-    record_id: int,
-    token: str | None = None,
-    x_tweak_token: str | None = Header(default=None),
-):
-    _token(x_tweak_token or token)
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT raw_log, source_file FROM test_results WHERE id = %s", (record_id,))
-            row = cur.fetchone()
+def tweak_raw_log(record_id: int, _user=Depends(auth.current_user)):
+    """Download one raw log. Any signed-in account (administrator or uploader)."""
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("SELECT raw_log, source_file FROM test_results WHERE id = %s", (record_id,))
+        row = cur.fetchone()
     if not row or not row[0]:
-        raise HTTPException(status_code=404, detail="Raw log not available")
-    return PlainTextResponse(row[0], headers={"Content-Disposition": f'attachment; filename="{row[1] or f"record_{record_id}.txt"}"'})
+        raise not_found(Msg("Raw log not available", "沒有這筆原始 log"))
+    name = file_name(row[1]) or f"record_{record_id}.txt"
+    safe = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in name)
+    return PlainTextResponse(row[0], headers={"Content-Disposition": f'attachment; filename="{safe}"'})
 
 
 @router.post("/reparse")
-def reparse(x_tweak_token: str | None = Header(default=None)):
-    _token(x_tweak_token)
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT id, work_order, raw_log, source_file FROM test_results WHERE raw_log IS NOT NULL AND raw_log != ''")
-            rows = cur.fetchall()
+def reparse(request: Request, admin=Depends(auth.require_admin)):
+    """Re-derive the fail fields from each stored raw log, one log in memory at a time."""
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("SELECT id FROM test_results WHERE raw_log IS NOT NULL AND raw_log != '' ORDER BY id")
+        ids = [row[0] for row in cur.fetchall()]
         updated = 0
-        for record_id, work_order, raw_log, source_file in rows:
-            original_name = Path(source_file or "").name
+        for record_id in ids:
+            cur.execute("SELECT work_order, raw_log, source_file FROM test_results WHERE id = %s", (record_id,))
+            row = cur.fetchone()
+            if not row:
+                continue
+            work_order, raw_log, source_file = row
+            original_name = file_name(source_file)
             if not original_name:
                 continue
             with tempfile.TemporaryDirectory(prefix="iw-reparse-") as temp_dir:
                 path = Path(temp_dir) / original_name
                 path.write_text(raw_log, encoding="utf-8")
                 parsed = parse_iw61x_log_file(path, work_order_override=work_order)
-                with conn.cursor() as cur:
-                    cur.execute(
-                        """
-                        UPDATE test_results
-                        SET fail_step_num = %s, fail_step_name = %s,
-                            fail_message = %s, fail_category = %s
-                        WHERE id = %s
-                        """,
-                        (parsed.fail_step_num, parsed.fail_step_name, parsed.fail_message, parsed.fail_category, record_id),
-                    )
-                    updated += cur.rowcount
-        conn.commit()
-    return {"updated": updated, "total": len(rows)}
+            cur.execute(
+                """
+                UPDATE test_results
+                SET fail_step_num = %s, fail_step_name = %s,
+                    fail_message = %s, fail_category = %s
+                WHERE id = %s
+                """,
+                (parsed.fail_step_num, parsed.fail_step_name, parsed.fail_message, parsed.fail_category, record_id),
+            )
+            updated += cur.rowcount
+        auth.audit(conn, request, admin["username"], "reparse", None, {"updated": updated})
+    return {"updated": updated, "total": len(ids)}
 
 
 def _public_row(row) -> dict:
@@ -551,7 +488,7 @@ def _public_row(row) -> dict:
         "fail_message": row.fail_message,
         "fail_error_code": None,
         "fail_category": row.fail_category,
-        "source_file": row.source_file,
+        "source_file": file_name(row.source_file),
     }
 
 

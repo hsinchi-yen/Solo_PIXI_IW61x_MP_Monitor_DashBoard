@@ -220,54 +220,100 @@ class _DictRow:
         self.measurements = row.get("measurements", [])
 
 
+RECORD_COLUMNS = """
+    id, work_order, product, mac1, mac2, mac1_source, start_time,
+    end_time, test_duration_sec, result, flow_file, package_name,
+    tester_sn, fw_version, fail_step_num, fail_step_name,
+    fail_message, fail_category, source_file, created_at
+"""
+
+
+def sql_filters(
+    work_order: str | None = None,
+    year: int | None = None,
+    month: int | None = None,
+    week: int | None = None,
+    day=None,
+    alias: str = "",
+    iso_year: bool | None = None,
+) -> tuple[str, list]:
+    """
+    The one scope filter every endpoint uses → ("WHERE ...", params).
+
+    `week` is an ISO week, so together with a week the year is the ISO year
+    (2024-12-30 belongs to 2025-W01, not to 2024). `day` is a date or 'YYYY-MM-DD'.
+    """
+    col = (lambda name: f"{alias}.{name}") if alias else (lambda name: name)
+    clauses = []
+    params: list = []
+    if work_order:
+        clauses.append(f"{col('work_order')} = %s")
+        params.append(work_order)
+    if year is not None:
+        if iso_year if iso_year is not None else week is not None:
+            clauses.append(f"EXTRACT(ISOYEAR FROM {col('start_time')}) = %s")
+            params.append(year)
+        else:
+            clauses.append(f"{col('start_time')} >= make_date(%s, 1, 1) AND {col('start_time')} < make_date(%s, 1, 1)")
+            params.extend([year, year + 1])
+    if month is not None:
+        clauses.append(f"EXTRACT(MONTH FROM {col('start_time')}) = %s")
+        params.append(month)
+    if week is not None:
+        clauses.append(f"EXTRACT(WEEK FROM {col('start_time')}) = %s")
+        params.append(week)
+    if day:
+        clauses.append(f"{col('start_time')} >= %s::date AND {col('start_time')} < %s::date + 1")
+        params.extend([str(day), str(day)])
+    return ("WHERE " + " AND ".join(clauses) if clauses else ""), params
+
+
 def fetch_records(
     conn,
     work_order: str | None = None,
     result: str | None = None,
-    limit: int = 5000,
+    limit: int | None = None,
     year: int | None = None,
     month: int | None = None,
     week: int | None = None,
-    day: str | None = None,
+    day=None,
+    results: tuple[str, ...] | None = None,
+    offset: int = 0,
 ):
-    clauses = []
-    params = []
-    if work_order:
-        clauses.append("work_order = %s")
-        params.append(work_order)
-    if result:
-        clauses.append("result = %s")
-        params.append(result)
-    if year is not None:
-        clauses.append("EXTRACT(YEAR FROM start_time) = %s")
-        params.append(year)
-    if month is not None:
-        clauses.append("EXTRACT(MONTH FROM start_time) = %s")
-        params.append(month)
-    if week is not None:
-        clauses.append("EXTRACT(WEEK FROM start_time) = %s")
-        params.append(week)
-    if day:
-        clauses.append("DATE(start_time) = %s")
-        params.append(day)
-    where = "WHERE " + " AND ".join(clauses) if clauses else ""
+    """Run rows (no raw_log), newest first. No limit unless the caller pages."""
+    where, params = sql_filters(work_order, year, month, week, day)
+    wanted = tuple(results or ((result,) if result else ()))
+    if wanted:
+        where = f"{where} AND result = ANY(%s)" if where else "WHERE result = ANY(%s)"
+        params.append(list(wanted))
+    paging = ""
+    if limit is not None:
+        paging = "LIMIT %s OFFSET %s"
+        params.extend([limit, offset])
     with conn.cursor() as cur:
         cur.execute(
             f"""
-            SELECT id, work_order, product, mac1, mac2, mac1_source, start_time,
-                   end_time, test_duration_sec, result, flow_file, package_name,
-                   tester_sn, fw_version, fail_step_num, fail_step_name,
-                   fail_message, fail_category, source_file, created_at
+            SELECT {RECORD_COLUMNS}
             FROM test_results
             {where}
-            ORDER BY start_time DESC
-            LIMIT %s
+            ORDER BY start_time DESC, id DESC
+            {paging}
             """,
-            [*params, limit],
+            params,
         )
         columns = [desc[0] for desc in cur.description]
         rows = [dict(zip(columns, row)) for row in cur.fetchall()]
     return rows_to_parsed_like(rows)
+
+
+def count_records(conn, results: tuple[str, ...] | None = None, **scope) -> int:
+    where, params = sql_filters(**scope)
+    if results:
+        where = f"{where} AND result = ANY(%s)" if where else "WHERE result = ANY(%s)"
+        params.append(list(results))
+    with conn.cursor() as cur:
+        cur.execute(f"SELECT COUNT(*) FROM test_results {where}", params)
+        return cur.fetchone()[0]
 
 
 def fetch_filter_options(
@@ -276,26 +322,10 @@ def fetch_filter_options(
     year: int | None = None,
     month: int | None = None,
     week: int | None = None,
-    day: str | None = None,
+    day=None,
 ) -> dict:
-    clauses = []
-    params = []
-    if work_order:
-        clauses.append("work_order = %s")
-        params.append(work_order)
-    if year is not None:
-        clauses.append("EXTRACT(YEAR FROM start_time) = %s")
-        params.append(year)
-    if month is not None:
-        clauses.append("EXTRACT(MONTH FROM start_time) = %s")
-        params.append(month)
-    if week is not None:
-        clauses.append("EXTRACT(WEEK FROM start_time) = %s")
-        params.append(week)
-    if day:
-        clauses.append("DATE(start_time) = %s")
-        params.append(day)
-    where = "WHERE " + " AND ".join(clauses) if clauses else ""
+    where, params = sql_filters(work_order, year, month, week, day)
+    week_where, week_params = sql_filters(work_order, year, month, week, day, iso_year=True)
     with conn.cursor() as cur:
         cur.execute(f"SELECT DISTINCT work_order FROM test_results {where} ORDER BY work_order", params)
         work_orders = [row[0] for row in cur.fetchall()]
@@ -305,7 +335,7 @@ def fetch_filter_options(
         years = [row[0] for row in cur.fetchall()]
         cur.execute(f"SELECT DISTINCT EXTRACT(MONTH FROM start_time)::int FROM test_results {where} ORDER BY 1", params)
         months = [row[0] for row in cur.fetchall()]
-        cur.execute(f"SELECT DISTINCT EXTRACT(WEEK FROM start_time)::int FROM test_results {where} ORDER BY 1", params)
+        cur.execute(f"SELECT DISTINCT EXTRACT(WEEK FROM start_time)::int FROM test_results {week_where} ORDER BY 1", week_params)
         weeks = [row[0] for row in cur.fetchall()]
     return {
         "work_orders": work_orders,
@@ -325,7 +355,7 @@ def fetch_work_order_summary(
     week: int | None = None,
     day: str | None = None,
 ) -> list[dict]:
-    where, params = _sql_filters(work_order, year, month, week, day)
+    where, params = sql_filters(work_order, year, month, week, day)
     with conn.cursor() as cur:
         cur.execute(
             f"""
@@ -397,7 +427,7 @@ def fetch_retry_summary(
     week: int | None = None,
     day: str | None = None,
 ) -> list[dict]:
-    where, params = _sql_filters(work_order, year, month, week, day)
+    where, params = sql_filters(work_order, year, month, week, day)
     with conn.cursor() as cur:
         cur.execute(
             f"""
@@ -415,7 +445,7 @@ def fetch_retry_summary(
             AND_OR_WHERE
             GROUP BY work_order, mac1
             HAVING COUNT(*) > 1
-            ORDER BY COUNT(*) DESC, MAX(start_time) DESC
+            ORDER BY COUNT(*) DESC, MAX(start_time) DESC, work_order, mac1
             LIMIT 500
             """.replace(
                 "AND_OR_WHERE",
@@ -427,33 +457,6 @@ def fetch_retry_summary(
         )
         columns = [desc[0] for desc in cur.description]
         return [dict(zip(columns, row)) for row in cur.fetchall()]
-
-
-def _sql_filters(
-    work_order: str | None,
-    year: int | None,
-    month: int | None,
-    week: int | None,
-    day: str | None,
-) -> tuple[str, list]:
-    clauses = []
-    params = []
-    if work_order:
-        clauses.append("work_order = %s")
-        params.append(work_order)
-    if year is not None:
-        clauses.append("EXTRACT(YEAR FROM start_time) = %s")
-        params.append(year)
-    if month is not None:
-        clauses.append("EXTRACT(MONTH FROM start_time) = %s")
-        params.append(month)
-    if week is not None:
-        clauses.append("EXTRACT(WEEK FROM start_time) = %s")
-        params.append(week)
-    if day:
-        clauses.append("DATE(start_time) = %s")
-        params.append(day)
-    return ("WHERE " + " AND ".join(clauses) if clauses else ""), params
 
 
 def fetch_metric_summary(conn, technology: str | None = None) -> dict:
@@ -469,7 +472,7 @@ def fetch_metric_summary(conn, technology: str | None = None) -> dict:
             FROM test_measurements
             {where}
             GROUP BY COALESCE(standard, 'Unknown')
-            ORDER BY COUNT(*) DESC
+            ORDER BY COUNT(*) DESC, 1
             """,
             params,
         )
@@ -480,7 +483,7 @@ def fetch_metric_summary(conn, technology: str | None = None) -> dict:
             FROM test_measurements
             {where}
             GROUP BY metric_name
-            ORDER BY COUNT(*) DESC
+            ORDER BY COUNT(*) DESC, metric_name
             LIMIT 30
             """,
             params,

@@ -1,71 +1,149 @@
 """
-Database connection and schema initialization for IW Solo PIXI dashboard.
-"""
-import os
-import psycopg2
+Database access for the IW Solo PIXI dashboard.
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql://pixi:pixipass@localhost:5434/pixi_test"
-)
+    with db() as conn:            # pooled; commit on success, rollback on error, always returned
+        ...
+
+Uploads keep a dedicated connection from get_connection() because they commit in batches;
+the caller closes it (see upload_routes.py).
+"""
+import logging
+import os
+import threading
+import time
+from contextlib import contextmanager
+
+import psycopg2
+from psycopg2.pool import ThreadedConnectionPool
+
+import config
+
+log = logging.getLogger("iw.db")
+
+DATABASE_URL = config.DATABASE_URL
+
+_pool = None
+_pool_lock = threading.Lock()
+_slots = threading.BoundedSemaphore(config.DB_POOL_MAX)
+
+
+class TimedCursor(psycopg2.extensions.cursor):
+    """Logs statements slower than SLOW_QUERY_MS."""
+
+    def execute(self, query, vars=None):
+        t0 = time.perf_counter()
+        try:
+            return super().execute(query, vars)
+        finally:
+            ms = (time.perf_counter() - t0) * 1000
+            if ms >= config.SLOW_QUERY_MS:
+                log.warning("slow query %.0f ms: %s", ms, " ".join(str(query).split())[:300])
 
 
 def get_connection(timeout: int = 5, database_url: str | None = None):
-    """Get a new database connection."""
+    """A dedicated (non-pooled) connection; the caller must close it."""
     return psycopg2.connect(database_url or DATABASE_URL, connect_timeout=timeout)
+
+
+def _get_pool():
+    global _pool
+    with _pool_lock:
+        if _pool is None:
+            _pool = ThreadedConnectionPool(1, config.DB_POOL_MAX, DATABASE_URL,
+                                           connect_timeout=5, cursor_factory=TimedCursor)
+        return _pool
+
+
+@contextmanager
+def db():
+    """Pooled connection. Waits for a free slot instead of failing when all are busy."""
+    _slots.acquire()
+    conn = None
+    broken = False
+    pool = None
+    try:
+        pool = _get_pool()
+        conn = pool.getconn()
+        if conn.closed:
+            pool.putconn(conn, close=True)
+            conn = pool.getconn()
+        yield conn
+        conn.commit()
+    except (psycopg2.InterfaceError, psycopg2.OperationalError):
+        broken = True
+        raise
+    except BaseException:
+        if conn is not None and not conn.closed:
+            try:
+                conn.rollback()
+            except psycopg2.Error:
+                broken = True
+        raise
+    finally:
+        if conn is not None and pool is not None:
+            try:
+                pool.putconn(conn, close=broken or bool(conn.closed))
+            except psycopg2.pool.PoolError:
+                pass
+        _slots.release()
+
+
+def close_pool():
+    global _pool
+    with _pool_lock:
+        if _pool is not None:
+            _pool.closeall()
+            _pool = None
+
+
+def _schema_path():
+    search_paths = [
+        "/app/schema.sql",                                              # Docker container
+        os.path.join(os.path.dirname(__file__), "..", "schema.sql"),    # Local dev
+        os.path.join(os.path.dirname(__file__), "schema.sql"),
+    ]
+    for path in search_paths:
+        resolved = os.path.abspath(path)
+        if os.path.exists(resolved):
+            return resolved
+    return None
 
 
 def init_schema(database_url: str | None = None):
     """
-    Initialize the database schema from schema.sql.
-    Idempotent: safe to call on every startup.
-    Searches multiple paths for schema.sql (Docker vs local dev).
+    Apply schema.sql. Idempotent (CREATE ... IF NOT EXISTS); an advisory lock keeps the
+    two uvicorn workers from running it at the same time.
     """
-    search_paths = [
-        "/app/schema.sql",                              # Docker container
-        os.path.join(os.path.dirname(__file__), "..", "schema.sql"),  # Local dev
-        os.path.join(os.path.dirname(__file__), "schema.sql"),
-    ]
-
-    schema_path = None
-    for path in search_paths:
-        resolved = os.path.abspath(path)
-        if os.path.exists(resolved):
-            schema_path = resolved
-            break
-
+    schema_path = _schema_path()
     if schema_path is None:
-        print("WARNING: schema.sql not found, skipping schema initialization.")
+        log.warning("schema.sql not found, skipping schema initialization")
         return
-
     with open(schema_path, "r", encoding="utf-8") as f:
         sql = f.read()
 
     conn = get_connection(database_url=database_url)
     try:
-        cur = conn.cursor()
-        cur.execute(sql)
+        with conn.cursor() as cur:
+            cur.execute("SELECT pg_advisory_xact_lock(%s)", (config.SCHEMA_LOCK_KEY,))
+            cur.execute(sql)
         conn.commit()
-        cur.close()
-        print(f"Schema initialized from {schema_path}")
-    except Exception as e:
+        log.info("schema initialized from %s", schema_path)
+    except Exception:
         conn.rollback()
-        raise e
+        raise
     finally:
         conn.close()
 
 
 def check_health() -> dict:
-    """Check database connectivity and return status dict."""
+    """Database connectivity; never returns exception text (it can carry host/user)."""
     try:
-        conn = get_connection(timeout=3)
-        cur = conn.cursor()
-        cur.execute("SELECT 1")
-        cur.fetchone()
-        cur.execute("SELECT COUNT(*) FROM test_results")
-        count = cur.fetchone()[0]
-        cur.close()
-        conn.close()
-        return {"status": "ok", "db": "connected", "test_results_count": count}
-    except Exception as e:
-        return {"status": "error", "db": str(e)}
+        t0 = time.perf_counter()
+        with db() as conn, conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM test_results")
+            count = cur.fetchone()[0]
+        return {"status": "ok", "db": "connected", "test_results_count": count,
+                "db_ms": round((time.perf_counter() - t0) * 1000, 1)}
+    except Exception:
+        log.exception("health check failed")
+        return {"status": "error", "db": "unavailable"}

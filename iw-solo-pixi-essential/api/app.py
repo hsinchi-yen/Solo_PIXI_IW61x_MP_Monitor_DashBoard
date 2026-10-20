@@ -1,43 +1,58 @@
 import asyncio
 import json
+import logging
 import os
 import threading
 import time
 import urllib.request
+from typing import Literal
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, RedirectResponse
-from db import init_schema, get_connection, check_health
+
+import auth
+import config
+import errors
+from db import init_schema, db, check_health
+from errors import ApiError, Msg, not_found
 from query_service import (
     build_ai_stats_from_records,
     build_fail_analysis_from_records,
     build_hourly_throughput_from_records,
     build_summary_from_records,
     build_yield_trend_from_records,
+    count_records,
     fetch_filter_options,
     fetch_metric_summary,
     fetch_records,
     fetch_retry_summary,
     fetch_work_order_summary,
 )
+from scope import Scope, file_name
 from ai_summary_helper import build_summary_messages
 
 from upload_routes import router as upload_router
-from admin_routes import router as admin_router
+from admin_routes import auth_router, router as admin_router
 from reference_routes import router as reference_router
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+log = logging.getLogger("iw.app")
+
 app = FastAPI(title="IW Solo PIXI Essential API")
+errors.install(app)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+if config.CORS_ORIGINS:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=config.CORS_ORIGINS,
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "PATCH", "DELETE"],
+        allow_headers=["Content-Type", "X-Tweak-Token"],
+    )
 
+app.include_router(auth_router)
 app.include_router(upload_router)
 app.include_router(admin_router)
 app.include_router(reference_router)
@@ -81,11 +96,11 @@ async def update_llm_status_loop():
 
 @app.on_event("startup")
 def startup_event():
+    config.warn_on_defaults()
     try:
         init_schema()
-        print("Schema initialized successfully.")
-    except Exception as e:
-        print(f"Error initializing schema: {e}")
+    except Exception:
+        log.exception("schema initialization failed")
 
 
 @app.on_event("startup")
@@ -96,85 +111,45 @@ async def start_llm_status_loop():
 def health_check():
     status = check_health()
     if status["status"] != "ok":
-        raise HTTPException(status_code=503, detail=status)
+        raise HTTPException(status_code=503, detail="database unavailable")
     return status
 
 
 @app.get("/api/filter-options")
-def api_filter_options(
-    work_order: str | None = None,
-    year: int | None = None,
-    month: int | None = None,
-    week: int | None = None,
-    day: str | None = None,
-):
-    with get_connection() as conn:
-        return fetch_filter_options(conn, work_order, year, month, week, day)
+def api_filter_options(scope: Scope = Depends()):
+    with db() as conn:
+        return fetch_filter_options(conn, **scope.kw())
 
 
 @app.get("/api/summary")
-def api_summary(
-    work_order: str | None = None,
-    year: int | None = None,
-    month: int | None = None,
-    week: int | None = None,
-    day: str | None = None,
-):
-    with get_connection() as conn:
-        return build_summary_from_records(
-            fetch_records(conn, work_order=work_order, year=year, month=month, week=week, day=day)
-        )
+def api_summary(scope: Scope = Depends()):
+    with db() as conn:
+        return build_summary_from_records(fetch_records(conn, **scope.kw()))
 
 
 @app.get("/api/yield-trend")
-def api_yield_trend(
-    work_order: str | None = None,
-    year: int | None = None,
-    month: int | None = None,
-    week: int | None = None,
-    day: str | None = None,
-):
-    with get_connection() as conn:
-        return build_yield_trend_from_records(
-            fetch_records(conn, work_order=work_order, year=year, month=month, week=week, day=day)
-        )
+def api_yield_trend(scope: Scope = Depends()):
+    with db() as conn:
+        return build_yield_trend_from_records(fetch_records(conn, **scope.kw()))
 
 
 @app.get("/api/work-order-summary")
-def api_work_order_summary(
-    work_order: str | None = None,
-    year: int | None = None,
-    month: int | None = None,
-    week: int | None = None,
-    day: str | None = None,
-):
-    with get_connection() as conn:
-        return fetch_work_order_summary(conn, work_order, year, month, week, day)
+def api_work_order_summary(scope: Scope = Depends()):
+    with db() as conn:
+        return fetch_work_order_summary(conn, **scope.kw())
 
 
 @app.get("/api/retries")
-def api_retries(
-    work_order: str | None = None,
-    year: int | None = None,
-    month: int | None = None,
-    week: int | None = None,
-    day: str | None = None,
-):
-    with get_connection() as conn:
-        return fetch_retry_summary(conn, work_order, year, month, week, day)
+def api_retries(scope: Scope = Depends()):
+    with db() as conn:
+        return fetch_retry_summary(conn, **scope.kw())
 
 
 @app.get("/api/fail-analysis")
-def api_fail_analysis(
-    work_order: str | None = None,
-    year: int | None = None,
-    month: int | None = None,
-    week: int | None = None,
-    day: str | None = None,
-):
-    with get_connection() as conn:
+def api_fail_analysis(scope: Scope = Depends()):
+    with db() as conn:
         analysis = build_fail_analysis_from_records(
-            fetch_records(conn, work_order=work_order, result=None, year=year, month=month, week=week, day=day)
+            fetch_records(conn, results=("FAIL", "STOP"), **scope.kw())
         )
     return [
         {
@@ -188,37 +163,36 @@ def api_fail_analysis(
 
 
 @app.get("/api/fail-list")
-def api_fail_list(work_order: str | None = None, page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=500)):
-    with get_connection() as conn:
-        records = fetch_records(conn, work_order=work_order, limit=10000)
-    filtered = [row for row in records if row.result in {"FAIL", "STOP"}]
-    start = (page - 1) * page_size
-    page_rows = filtered[start:start + page_size]
+def api_fail_list(scope: Scope = Depends(), page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=500)):
+    results = ("FAIL", "STOP")
+    with db() as conn:
+        total = count_records(conn, results=results, **scope.kw())
+        rows = fetch_records(conn, results=results, limit=page_size, offset=(page - 1) * page_size, **scope.kw())
     return {
-        "total": len(filtered),
+        "total": total,
         "page": page,
         "page_size": page_size,
-        "rows": [_record_public(row) for row in page_rows],
+        "rows": [_record_public(row) for row in rows],
     }
 
 
 @app.get("/api/bt-analysis")
 def api_bt_analysis():
-    with get_connection() as conn:
+    with db() as conn:
         return fetch_metric_summary(conn, "BT")
 
 
 @app.get("/api/wifi-analysis")
 def api_wifi_analysis():
-    with get_connection() as conn:
+    with db() as conn:
         return fetch_metric_summary(conn, "WIFI")
 
 
 @app.get("/api/advanced")
-def api_advanced(work_order: str | None = None):
-    with get_connection() as conn:
+def api_advanced(work_order: str | None = Query(None, max_length=64)):
+    with db() as conn:
         records = fetch_records(conn, work_order=work_order)
-        retry_rows = fetch_retry_summary(conn)
+        retry_rows = fetch_retry_summary(conn, work_order=work_order)
     durations = [row.test_duration_sec for row in records if row.test_duration_sec is not None]
     return {
         "duration": {
@@ -233,9 +207,15 @@ def api_advanced(work_order: str | None = None):
 
 
 @app.get("/api/hourly-throughput")
-def api_hourly_throughput(work_order: str | None = None, hours: int = Query(24, ge=1, le=168)):
-    with get_connection() as conn:
-        records = fetch_records(conn, work_order=work_order, limit=20000)
+def api_hourly_throughput(work_order: str | None = Query(None, max_length=64), hours: int = Query(24, ge=1, le=168)):
+    with db() as conn:
+        latest = _latest_start(conn, work_order)
+        if latest is None:
+            return build_hourly_throughput_from_records([], hours=hours)
+        records = [
+            row for row in fetch_records(conn, work_order=work_order)
+            if row.start_time and (latest - row.start_time).total_seconds() < (hours + 1) * 3600
+        ]
     return build_hourly_throughput_from_records(records, hours=hours)
 
 
@@ -245,8 +225,12 @@ def api_llm_status():
 
 
 @app.get("/api/workorders/{wo}/ai-summary")
-def api_ai_summary(wo: str, lang: str = "zh", mode: str = "normal"):
-    cache_key = f"{wo}_{lang}_{mode}"
+def api_ai_summary(wo: str, lang: Literal["zh", "en"] = "zh", mode: Literal["normal", "carousel"] = "normal"):
+    with db() as conn:
+        fingerprint = _data_fingerprint(conn, wo)
+    # The fingerprint changes on any upload or delete of this work order, so a stale
+    # report is never served — in either uvicorn worker.
+    cache_key = f"{wo}_{lang}_{mode}_{fingerprint}"
     with _AI_CACHE_LOCK:
         entry = AI_SUMMARY_CACHE.get(cache_key)
         if entry and time.time() - entry["timestamp"] < AI_SUMMARY_CACHE_TTL_SEC:
@@ -258,35 +242,40 @@ def api_ai_summary(wo: str, lang: str = "zh", mode: str = "normal"):
         if entry and time.time() - entry["timestamp"] < AI_SUMMARY_CACHE_TTL_SEC:
             return {"summary": entry["summary"]}
 
-        with get_connection() as conn:
+        with db() as conn:
             records = fetch_records(conn, work_order=wo)
         if not records:
-            raise HTTPException(status_code=404, detail="Work order not found or has no data")
+            raise not_found(Msg("Work order not found or has no data", "找不到這張工單或沒有資料"))
 
         stats = build_ai_stats_from_records(records)
-        fails_text = ", ".join(f"{row['step']}({row['count']} units)" for row in stats["top_fails"]) or "No specific failures"
+        fails_text = ", ".join(f"{row['step']}({row['count']} failed attempts)" for row in stats["top_fails"]) or "No specific failures"
         messages = build_summary_messages(stats, fails_text, wo, lang, mode)
 
         try:
             _, res_data = _llm_request("/chat/completions", {"model": LLM_MODEL, "messages": messages}, timeout=180)
             content = res_data["choices"][0]["message"]["content"]
-        except Exception as e:
-            raise HTTPException(status_code=502, detail=f"LLM request failed: {e}")
+        except Exception:
+            log.exception("LLM request failed for %s", wo)
+            raise ApiError(502, Msg("The AI service did not answer. Please try again later.",
+                                    "AI 服務沒有回應，請稍後再試"), "llm_unavailable")
 
         with _AI_CACHE_LOCK:
-            AI_SUMMARY_CACHE[cache_key] = {"summary": content, "timestamp": time.time()}
+            now = time.time()
+            for key in [k for k, v in AI_SUMMARY_CACHE.items() if now - v["timestamp"] >= AI_SUMMARY_CACHE_TTL_SEC]:
+                AI_SUMMARY_CACHE.pop(key, None)
+                AI_SUMMARY_LOCKS.pop(key, None)
+            AI_SUMMARY_CACHE[cache_key] = {"summary": content, "timestamp": now}
         return {"summary": content}
 
 
 @app.get("/api/raw-log/{result_id}")
-def api_raw_log(result_id: int):
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT source_file, raw_log FROM test_results WHERE id = %s", (result_id,))
-            row = cur.fetchone()
+def api_raw_log(result_id: int, _user=Depends(auth.current_user)):
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("SELECT source_file, raw_log FROM test_results WHERE id = %s", (result_id,))
+        row = cur.fetchone()
     if not row:
-        raise HTTPException(status_code=404, detail="Record not found")
-    return {"source_file": row[0], "raw_log": row[1]}
+        raise not_found(Msg("Record not found", "找不到這筆紀錄"))
+    return {"source_file": file_name(row[0]), "raw_log": row[1]}
 
 @app.get("/")
 def serve_index():
@@ -319,6 +308,20 @@ def _static_path(name: str) -> str:
     return os.path.join(STATIC_DIR, name)
 
 
+def _latest_start(conn, work_order):
+    with conn.cursor() as cur:
+        cur.execute("SELECT MAX(start_time) FROM test_results WHERE (%s::text IS NULL OR work_order = %s)",
+                    (work_order, work_order))
+        return cur.fetchone()[0]
+
+
+def _data_fingerprint(conn, work_order: str) -> str:
+    with conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*), COALESCE(MAX(id), 0) FROM test_results WHERE work_order = %s", (work_order,))
+        count, max_id = cur.fetchone()
+    return f"{count}-{max_id}"
+
+
 def _record_public(row) -> dict:
     return {
         "id": row.id,
@@ -334,5 +337,5 @@ def _record_public(row) -> dict:
         "fail_step_name": row.fail_step_name,
         "fail_message": row.fail_message,
         "fail_category": row.fail_category,
-        "source_file": row.source_file,
+        "source_file": file_name(row.source_file),
     }

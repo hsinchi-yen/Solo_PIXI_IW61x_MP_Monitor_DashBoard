@@ -92,6 +92,62 @@ CREATE TABLE IF NOT EXISTS alignment_targets (
     updated_at      TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
+-- -----------------------------------------------------------
+-- Accounts: uploader logins (the administrator comes from ADMIN_USER / ADMIN_PASS)
+-- -----------------------------------------------------------
+CREATE TABLE IF NOT EXISTS app_users (
+    id                  SERIAL PRIMARY KEY,
+    username            TEXT NOT NULL UNIQUE,
+    display_name        TEXT NOT NULL,
+    department          TEXT,
+    email               TEXT,
+    password_hash       TEXT NOT NULL,
+    enabled             BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at          TIMESTAMPTZ DEFAULT NOW(),
+    created_by          TEXT,
+    updated_at          TIMESTAMPTZ,
+    password_changed_at TIMESTAMPTZ,
+    last_login_at       TIMESTAMPTZ,
+    last_login_ip       TEXT
+);
+
+-- Sessions: only the SHA-256 of each token is stored
+CREATE TABLE IF NOT EXISTS app_sessions (
+    token_hash  TEXT PRIMARY KEY,
+    username    TEXT NOT NULL,
+    role        TEXT NOT NULL,
+    cred_fp     TEXT,
+    created_at  TIMESTAMPTZ DEFAULT NOW(),
+    expires_at  TIMESTAMPTZ NOT NULL,
+    client_ip   TEXT,
+    revoked_at  TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_app_sessions_username ON app_sessions (username);
+
+CREATE TABLE IF NOT EXISTS auth_log (
+    id          BIGSERIAL PRIMARY KEY,
+    at          TIMESTAMPTZ DEFAULT NOW(),
+    username    TEXT,
+    event       TEXT,
+    success     BOOLEAN,
+    reason      TEXT,
+    client_ip   TEXT,
+    user_agent  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_auth_log_at ON auth_log (at DESC);
+
+-- Who changed what: accounts, alignment targets, deletes, uploads
+CREATE TABLE IF NOT EXISTS account_audit (
+    id          BIGSERIAL PRIMARY KEY,
+    at          TIMESTAMPTZ DEFAULT NOW(),
+    actor       TEXT,
+    action      TEXT,
+    target      TEXT,
+    detail      JSONB,
+    client_ip   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_account_audit_at ON account_audit (at DESC);
+
 -- ============================================================
 -- Indexes for analytics query performance
 -- ============================================================

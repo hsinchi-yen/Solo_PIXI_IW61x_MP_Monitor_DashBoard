@@ -351,6 +351,7 @@ class UploadWorker(QThread):
         # --- Ingest -------------------------------------------------------
         # ingest_paths does parallel parsing + sequential DB writes + periodic commits
         try:
+            repo.begin_batch(self.work_order, "gui")
             report = ingest_paths(
                 self.file_paths,
                 repo,
@@ -358,6 +359,7 @@ class UploadWorker(QThread):
                 source="gui",
                 progress_callback=_progress,
             )
+            repo.finish_batch(report)
         except Exception as exc:
             self.error.emit(str(exc))
             conn.close()

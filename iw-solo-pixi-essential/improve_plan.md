@@ -6,7 +6,7 @@
 | 參考 | pixi-dashboard（`Solo_PIXI_MP_Monitor_DashBoard`）v3.1.0 的 `improve_plan.md` 與實作 |
 | 範圍 | `iw-solo-pixi-essential/`（看板、API、匯入、部署）；桌面 uploader 只修共用程式 |
 | 調查方式 | 正式機程式與 DB 已對齊到本機（見 `docs/sync/remote_diff_261020.md`）；逐檔審閱前後端，在本機實測 API、SQL（EXPLAIN）、無頭 Chrome、AI 報告 |
-| 狀態 | **尚未實作**。所有驗證在本機進行；正式機等你確認後才部署 |
+| 狀態 | **第 1 階段（止血）本機完成**（2026-10-20，見第 5 節）；尚未部署到正式機 |
 
 ---
 
@@ -169,6 +169,34 @@
 | | **合計** | **約 32 天** | |
 
 - 每階段：本機實作與驗證 → 回報 → 你測試 → 你同意後才部署到正式機。
+
+---
+
+## 5. 實作紀錄
+
+### 第 1 階段：止血（2026-10-20，本機完成，未部署）
+
+| 項目 | 處理 | 驗證 |
+|------|------|------|
+| S1 token 可偽造 | 改成 pixi-dashboard 的做法：登入 token 是亂數，DB 只存 SHA-256（`app_sessions`），**沒有簽章金鑰**；改 `ADMIN_PASS` 會讓舊的管理者登入失效。compose 傳入 `ADMIN_USER`／`ADMIN_PASS`；用預設密碼時 API 會記警告 | 舊格式（預設金鑰自簽）的 token → 401 |
+| S2 不用登入就能寫入 | Alignment 目標、上傳、raw log、DB Tweak、reparse 都要登入；**管理者**／**上傳者**兩種角色（Q14），上傳者帳號在 `app_users` | 未登入 401、上傳者做管理動作 403 |
+| S3 | token 只接受 `X-Tweak-Token` header（不再接受網址 `?token=`）；刪除需 `confirm=DELETE`；CORS 預設只允許同源；帳號、目標、刪除、上傳、reparse 都寫入 `account_audit` | 測試 |
+| S4 | 統一錯誤格式 `{error, error_zh, detail, code}`，不回傳例外原文；`source_file` 畫面與 API 只顯示檔名（DB 保留原值，Q10）；AI 報告 Markdown 經 DOMPurify 3.1.6 | 測試＋瀏覽器 |
+| R1 連線外洩 | 每個 worker 一個連線池，例外時一定歸還 | 60 次錯誤＋正常請求後連線數不增加 |
+| R2 錯誤參數 500 | `day` 必須是日期、`month` 1–12、`week` 1–53、`year` 2000–2100、`page_size` 數字或 All；Alignment 目標必須是整數 | 一律 400 |
+| R3 匯入中斷 | 每個檔案一個 SAVEPOINT，單檔失敗只回滾該檔；網頁與桌面上傳都寫 `upload_batches`，`data_quality_issues.batch_id` 有值；上傳在背景執行緒處理，不卡住 API | 測試 |
+| R4 AI 快取 | 快取鍵加上資料指紋（筆數＋最大 id），上傳或刪除後兩個 worker 都不會再給舊報告；`lang`／`mode` 只接受固定值 | 測試 |
+| B1 截斷 | 移除 `LIMIT 5000`；Fail List 在 SQL 篩 FAIL/STOP 並分頁 | 測試 |
+| B6 ISO 週 | 三份篩選函式合併成 `sql_filters()`；有週時年份用 ISO 年 | 測試 |
+| B7 排序 | top 30 加第二排序鍵 | 連續呼叫結果相同 |
+| U1–U3 | AI 連結不再讓畫面變空白；報告視窗只有 Esc／×／點外面才關、不自動關閉、文字可選取、產品名改 IW611，英文完成後按「中文 ▶」看中文；API 失敗顯示訊息與重試；API 狀態與「資料更新時間」會更新 | 瀏覽器 29 項 |
+| Q7 輪播 | 閒置輪播與排程輪播停用（每小時閒置時的資料更新保留） | 瀏覽器 |
+| 其他 | AI 報告的失敗步驟改寫「failed attempts」（原本誤寫 units）；reparse 一次只載入一筆 log，並修正 Windows 路徑檔名；schema 初始化加 advisory lock，兩個 worker 不會同時執行 | |
+
+- **測試**：pytest 43 項全過（原 17 項＋單元 14 項＋API 整合 13 項，整合測試用暫時資料庫 `iw_it_*`，跑完刪除）；180 筆 dry run 0 錯誤；瀏覽器 29 項全過（`tests/browser/stage1_browser.js`）。
+- **與改動前比對**：31 個 API 回應除了刻意修正的項目（排序、錯誤格式、`/health` 多 `db_ms`）以外完全相同。
+- **新增資料表**（Q9）：`app_users`、`app_sessions`、`auth_log`、`account_audit`。既有資料表沒有變更。
+- **部署到正式機前要決定**：正式機 `.env` 目前沒有設 `ADMIN_PASS`，會沿用預設 `pixipass`；部署時需要設定新密碼。
 
 ---
 

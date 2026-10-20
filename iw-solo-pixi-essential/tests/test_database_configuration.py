@@ -17,7 +17,10 @@ class DatabaseConfigurationTests(unittest.TestCase):
         db.init_schema(selected_url)
 
         connect.assert_called_once_with(selected_url, connect_timeout=5)
-        connection.cursor.return_value.execute.assert_called_once()
+        cursor = connection.cursor.return_value.__enter__.return_value
+        statements = [call.args[0] for call in cursor.execute.call_args_list]
+        self.assertIn("pg_advisory_xact_lock", statements[0])
+        self.assertIn("CREATE TABLE IF NOT EXISTS test_results", statements[1])
         connection.commit.assert_called_once()
         connection.close.assert_called_once()
 

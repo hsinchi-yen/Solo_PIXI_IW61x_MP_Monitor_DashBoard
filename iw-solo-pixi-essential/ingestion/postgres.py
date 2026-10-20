@@ -15,11 +15,42 @@ class PostgresRunRepository:
     * Issues also use ``execute_values``.
     * Commits are driven externally (``ingest_paths`` commits every N files),
       keeping individual transactions small.
+    * Each ``save`` runs inside a SAVEPOINT, so one file that fails to insert
+      is rolled back alone and the rest of the batch keeps going.
+    * ``begin_batch`` / ``finish_batch`` record the upload in ``upload_batches``
+      and tag that upload's data-quality issues with the batch id.
     """
 
     def __init__(self, conn):
         self.conn = conn
+        self.batch_id: int | None = None
         self._known_hashes: set[str] | None = None   # lazy-loaded
+
+    # ------------------------------------------------------------------
+    # Upload batch bookkeeping
+    # ------------------------------------------------------------------
+    def begin_batch(self, work_order: str | None, source: str) -> int:
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO upload_batches (work_order, upload_source) VALUES (%s, %s) RETURNING id",
+                (work_order, source),
+            )
+            self.batch_id = cur.fetchone()[0]
+        return self.batch_id
+
+    def finish_batch(self, report) -> None:
+        if self.batch_id is None:
+            return
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE upload_batches
+                SET total_files = %s, uploaded = %s, duplicates = %s, rejected = %s, warnings = %s
+                WHERE id = %s
+                """,
+                (report.total_files, report.uploaded, report.duplicates, report.rejected, report.warnings,
+                 self.batch_id),
+            )
 
     # ------------------------------------------------------------------
     # Internal: hash cache
@@ -46,49 +77,59 @@ class PostgresRunRepository:
     def save(self, parsed, source: str = "api") -> int:
         self._ensure_hash_cache()
         with self.conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO test_results (
-                    work_order, product, mac1, mac2, mac1_source, start_time,
-                    end_time, test_duration_sec, result, flow_file, package_name,
-                    tester_sn, fw_version, fail_step_num, fail_step_name,
-                    fail_message, fail_category, raw_log, file_hash, source_file
-                )
-                VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s
-                )
-                RETURNING id
-                """,
-                (
-                    parsed.work_order,
-                    parsed.product,
-                    parsed.mac1,
-                    parsed.mac2,
-                    parsed.mac1_source,
-                    parsed.start_time,
-                    parsed.end_time,
-                    parsed.test_duration_sec,
-                    parsed.result,
-                    parsed.flow_file,
-                    parsed.package_name,
-                    parsed.tester_sn,
-                    parsed.fw_version,
-                    parsed.fail_step_num,
-                    parsed.fail_step_name,
-                    parsed.fail_message,
-                    parsed.fail_category,
-                    parsed.raw_log,
-                    parsed.file_hash,
-                    parsed.source_file,
-                ),
-            )
-            result_id = cur.fetchone()[0]
-            self._save_measurements(cur, result_id, parsed.measurements)
-            self._save_issues(cur, result_id, parsed.issues)
+            cur.execute("SAVEPOINT iw_save_run")
+            try:
+                result_id = self._insert_run(cur, parsed)
+            except Exception:
+                cur.execute("ROLLBACK TO SAVEPOINT iw_save_run")
+                raise
+            cur.execute("RELEASE SAVEPOINT iw_save_run")
 
         # Track in local cache so repeated calls within same session also dedup
         self._known_hashes.add(parsed.file_hash)
+        return result_id
+
+    def _insert_run(self, cur, parsed) -> int:
+        cur.execute(
+            """
+            INSERT INTO test_results (
+                work_order, product, mac1, mac2, mac1_source, start_time,
+                end_time, test_duration_sec, result, flow_file, package_name,
+                tester_sn, fw_version, fail_step_num, fail_step_name,
+                fail_message, fail_category, raw_log, file_hash, source_file
+            )
+            VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s
+            )
+            RETURNING id
+            """,
+            (
+                parsed.work_order,
+                parsed.product,
+                parsed.mac1,
+                parsed.mac2,
+                parsed.mac1_source,
+                parsed.start_time,
+                parsed.end_time,
+                parsed.test_duration_sec,
+                parsed.result,
+                parsed.flow_file,
+                parsed.package_name,
+                parsed.tester_sn,
+                parsed.fw_version,
+                parsed.fail_step_num,
+                parsed.fail_step_name,
+                parsed.fail_message,
+                parsed.fail_category,
+                parsed.raw_log,
+                parsed.file_hash,
+                parsed.source_file,
+            ),
+        )
+        result_id = cur.fetchone()[0]
+        self._save_measurements(cur, result_id, parsed.measurements)
+        self._save_issues(cur, result_id, parsed.issues)
         return result_id
 
     # ------------------------------------------------------------------
@@ -138,9 +179,9 @@ class PostgresRunRepository:
         execute_values(
             cur,
             """
-            INSERT INTO data_quality_issues (test_result_id, issue_type, description)
+            INSERT INTO data_quality_issues (test_result_id, batch_id, issue_type, description)
             VALUES %s
             """,
-            [(result_id, iss.issue_type, iss.description) for iss in issues],
+            [(result_id, self.batch_id, iss.issue_type, iss.description) for iss in issues],
             page_size=1_000,
         )
