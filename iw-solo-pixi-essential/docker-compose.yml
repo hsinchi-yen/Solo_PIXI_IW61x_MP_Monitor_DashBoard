@@ -7,6 +7,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pixipass}
     ports:
       - "${IW_DB_PORT:-5434}:5432"
+    restart: unless-stopped
     volumes:
       - iw-pixi-pgdata:/var/lib/postgresql/data
       - ./schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
@@ -24,6 +25,7 @@ services:
     command: uvicorn app:app --host 0.0.0.0 --port 8003 --workers 2
     ports:
       - "${IW_API_PORT:-8003}:8003"
+    restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-pixi}:${POSTGRES_PASSWORD:-pixipass}@postgres:5432/${POSTGRES_DB:-pixi_test}
       LLM_API_BASE: ${LLM_API_BASE:-http://10.20.30.23:8000/v1}
@@ -57,6 +59,7 @@ services:
     image: nginx:1.27-alpine
     ports:
       - "${IW_WEB_PORT:-8004}:80"
+    restart: unless-stopped
     volumes:
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
     networks:

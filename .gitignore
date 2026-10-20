@@ -21,6 +21,9 @@ __pycache__/
 *.env.local
 /iw-solo-pixi-essential/.system_up.env
 
+# Database dumps pulled from production
+/iw-solo-pixi-essential/dbbackup/
+
 # OS / editor cruft
 .DS_Store
 Thumbs.db

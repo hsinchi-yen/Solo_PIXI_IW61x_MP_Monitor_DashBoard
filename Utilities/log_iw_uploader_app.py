@@ -47,11 +47,14 @@ except ImportError as exc:
 
 # ---------------------------------------------------------------------------
 # Path bootstrap — makes parsers/ingestion importable whether we're run from
-# the project root OR from anywhere via an absolute path.
+# the project root, from Utilities/ next to iw-solo-pixi-essential/, or from
+# anywhere via an absolute path.
 # ---------------------------------------------------------------------------
 _APP_DIR = Path(__file__).resolve().parent
-if str(_APP_DIR) not in sys.path:
-    sys.path.insert(0, str(_APP_DIR))
+for _candidate in (_APP_DIR, _APP_DIR.parent / "iw-solo-pixi-essential"):
+    if (_candidate / "ingestion").is_dir() and str(_candidate) not in sys.path:
+        sys.path.insert(0, str(_candidate))
+        break
 
 from ingestion.postgres import PostgresRunRepository
 from ingestion.service import collect_log_files, ingest_paths
