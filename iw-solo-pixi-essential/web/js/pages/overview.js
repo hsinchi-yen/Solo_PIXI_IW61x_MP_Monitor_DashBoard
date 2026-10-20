@@ -181,8 +181,8 @@ async function load(app) {
         ['#ovYield', '#ovUnits', '#ovPass', '#ovFail', '#ovStop', '#ovRetry', '#ovSpec'].forEach(id => { $(id).textContent = '—'; });
         $('#ovViews').textContent = '';
         $('#ovAligned').textContent = err.message;
-        ['chOvTrend', 'chOvHourly', 'chOvSteps', 'chOvMonthly'].forEach(id =>
-            charts.chartMessage(id, t('common.loadFailedMsg', { error: err.message }), 'error'));
+        ['chOvTrend', 'chOvHourly', 'chOvSteps', 'chOvMonthly'].forEach((id, i) =>
+            charts.chartMessage(id, t('common.loadFailedMsg', { error: err.message }), 'error', i ? null : () => load(app)));
     }
 }
 

@@ -284,6 +284,15 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual((row["status"], row["error"]), ("skipped", "no data"))
 
     # ── input validation ─────────────────────────────────────────────────────
+    def test_refresh_now_is_public_and_limited_in_the_database(self):
+        # The limit is stored in app_meta, so it also holds when requests reach different workers.
+        with self.db_module.db() as conn:
+            self.db_module.execute(conn, "DELETE FROM app_meta WHERE key = 'manual_refresh_at'")
+        self.assertEqual(self.client.post("/api/stats/refresh").status_code, 200)
+        r = self.client.post("/api/stats/refresh")
+        self.assertEqual((r.status_code, r.json()["code"]), (429, "too_soon"))
+        self.assertEqual(self._scalar("SELECT COUNT(*) FROM app_meta WHERE key = 'manual_refresh_at'"), 1)
+
     def test_bad_parameters_are_400_not_500(self):
         for params in ({"date_from": "foo"}, {"day": "2026-13-45"}, {"week": 99, "year": 2026}, {"month": 13, "year": 2026},
                        {"week": 3}, {"date_from": "2026-07-22", "date_to": "2026-07-21"}):

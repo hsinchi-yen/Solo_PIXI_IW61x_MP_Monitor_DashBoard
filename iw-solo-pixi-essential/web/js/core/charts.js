@@ -1,5 +1,7 @@
 // Chart.js helpers. Colours are read from the theme's CSS variables, so switching
 // Dark / Light re-renders every chart with matching colours.
+import { t } from './i18n.js';
+
 const charts = new Map();
 
 export function cssVar(name) {
@@ -42,14 +44,23 @@ function clearMessage(canvas) {
 }
 
 /** Show a message over a chart area instead of an empty canvas. */
-export function chartMessage(canvasId, text, kind = '') {
+export function chartMessage(canvasId, text, kind = '', onRetry = null) {
     const canvas = document.getElementById(canvasId);
     if (!canvas) return;
     destroy(canvasId);
     clearMessage(canvas);
     const div = document.createElement('div');
     div.className = `state-msg ${kind}`;
-    div.textContent = text;
+    const msg = document.createElement('div');
+    msg.textContent = text;
+    div.appendChild(msg);
+    if (onRetry) {
+        const btn = document.createElement('button');
+        btn.className = 'btn small';
+        btn.textContent = t('common.retry');
+        btn.addEventListener('click', onRetry);
+        div.appendChild(btn);
+    }
     canvas.parentElement.appendChild(div);
 }
 

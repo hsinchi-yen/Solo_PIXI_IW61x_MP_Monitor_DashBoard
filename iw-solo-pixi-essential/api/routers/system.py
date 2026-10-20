@@ -40,16 +40,21 @@ def llm_status():
             "model": s["model"], "last_ok_at": s["last_ok_at"]}
 
 
-_last_manual_refresh = {"at": 0.0}
-
-
 @router.post("/api/stats/refresh")
 def refresh_stats():
-    """"Refresh now": recompute the statistics (public like the dashboard, at most every 10 seconds)."""
-    if time.time() - _last_manual_refresh["at"] < 10:
+    """"Refresh now": recompute the statistics (public like the dashboard, at most every 10 seconds).
+
+    The 10-second limit lives in app_meta so it holds across every API worker."""
+    with db.db() as conn:
+        claimed = db.fetch_one(conn, """
+            INSERT INTO app_meta (key, value, updated_at) VALUES ('manual_refresh_at', NOW()::text, NOW())
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+            WHERE app_meta.updated_at < NOW() - INTERVAL '10 seconds'
+            RETURNING key
+        """)
+    if not claimed:
         raise ApiError(429, Msg("Just refreshed. Please try again in a few seconds.", "剛剛才更新過，請稍候再試"),
                        "too_soon")
-    _last_manual_refresh["at"] = time.time()
     return {"stats_refreshed_at": stats.refresh(wait=True)}
 
 
