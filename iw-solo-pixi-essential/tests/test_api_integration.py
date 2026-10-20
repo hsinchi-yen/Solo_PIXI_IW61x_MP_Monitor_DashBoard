@@ -130,6 +130,21 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual({s["station"]: s["records"] for s in facts["stations"]}, {"30": 78, "40": 102})
         self.assertIn("180", self.first_upload["upload"]["chat_opening"])
 
+    def test_work_order_folder_holding_the_tester_zip(self):
+        # Layout used on the line: <work order>/TN329_IW611_LOG.zip → TN329_IW611_LOG/<station>/Log_all.txt.
+        inner = io.BytesIO()
+        with zipfile.ZipFile(inner, "w", zipfile.ZIP_DEFLATED) as z:
+            for station in ("30", "40"):
+                z.write(LOG_ALL / station / "Log_all.txt", f"TN329_IW611_LOG/{station}/Log_all.txt")
+        outer = io.BytesIO()
+        with zipfile.ZipFile(outer, "w") as z:
+            z.writestr(f"{WO}/TN329_IW611_LOG.zip", inner.getvalue())
+        facts = self._analyze(self.uploader, [("files", (f"{WO}.zip", outer.getvalue(), "application/zip"))])["facts"]
+        self.assertEqual(facts["inferred_wo"], WO)
+        self.assertEqual({s["station"]: s["records"] for s in facts["stations"]}, {"30": 78, "40": 102})
+        self.assertEqual((facts["total_records"], facts["unique_mac1"]), (180, 120))
+        self.assertEqual(facts["existing_by_wo"], {WO: 180})       # same runs as the plain zip: same hashes
+
     def test_commit_wrote_every_run_and_recorded_the_batch(self):
         self.assertEqual(self.first_upload["done"]["uploaded"], 180)
         upload_id = self.first_upload["upload"]["upload_id"]
