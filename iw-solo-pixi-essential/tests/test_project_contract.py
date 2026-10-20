@@ -10,8 +10,10 @@ class ProjectContractTests(unittest.TestCase):
         compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
 
         self.assertIn("${IW_DB_PORT:-5434}:5432", compose)
-        self.assertIn("${IW_API_PORT:-8003}:8003", compose)
-        self.assertIn("${IW_WEB_PORT:-8004}:80", compose)
+        # One public port (2026-10-20): nginx on 8003; the API is internal only.
+        self.assertIn("${IW_WEB_PORT:-8003}:80", compose)
+        self.assertNotIn("IW_API_PORT", compose)
+        self.assertNotIn("8004", compose)
         self.assertNotIn("container_name:", compose)
         self.assertIn("@postgres:5432/", compose)
         self.assertNotIn("5433:5432", compose)
@@ -26,6 +28,8 @@ class ProjectContractTests(unittest.TestCase):
         self.assertIn("server api:8003;", nginx)
         self.assertIn("root /usr/share/nginx/html;", nginx)
         self.assertIn("proxy_buffering off;", nginx)
+        # pre-2.0 bookmarks (e.g. /work-orders.html) go through nginx to the API, which redirects them
+        self.assertIn("work-orders|fail-list|fail-analysis|bt-analysis|wifi-analysis|advanced|upload|admin|alignment", nginx)
 
     def test_code_is_baked_into_the_image(self):
         dockerfile = (ROOT / "api" / "Dockerfile").read_text(encoding="utf-8")
@@ -43,8 +47,9 @@ class ProjectContractTests(unittest.TestCase):
 
         self.assertIn("set -Eeuo pipefail", script)
         self.assertIn("choose_port", script)
-        self.assertIn("IW_API_PORT", script)
         self.assertIn("IW_WEB_PORT", script)
+        self.assertIn('legacy_api_port="$(saved_value IW_API_PORT', script)   # old two-port layouts keep 8003
+        self.assertNotIn('wait_for_health "API"', script)
         self.assertIn("IW_DB_PORT", script)
         self.assertIn(".system_up.env", script)
         self.assertIn("docker compose", script)
@@ -55,8 +60,9 @@ class ProjectContractTests(unittest.TestCase):
     def test_deploy_scripts_back_up_and_roll_back(self):
         deploy = (ROOT / "scripts" / "deploy.sh").read_text(encoding="utf-8")
         for text in ("pg_dump", "oldbackup/$(date +%y%m%d)", "--exclude '.env'", "--exclude '.system_up.env'",
-                     "bash system_up.sh", "health check FAILED", "tar xzf"):
+                     "bash system_up.sh", "health check FAILED", "tar xzf", "down --remove-orphans"):
             self.assertIn(text, deploy)
+        self.assertNotIn("down -v", deploy)            # rollback never deletes the data volumes
         backup = (ROOT / "scripts" / "backup_db.sh").read_text(encoding="utf-8")
         self.assertIn("KEEP_DAYS:-14", backup)
 

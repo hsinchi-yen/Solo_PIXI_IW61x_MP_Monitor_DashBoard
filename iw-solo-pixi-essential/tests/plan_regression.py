@@ -3,8 +3,8 @@
 Standard library only, so it also runs on the server after a deployment. Each check is tagged
 with its improve_plan.md item (B1…B7, S1…S4, R1…R4, U2…U5, C1, A1…A6, B2…B5, C1…C4, D, E1…E4).
 
-    python tests/plan_regression.py                                  # read-only, http://localhost:8004
-    python tests/plan_regression.py --base http://host:8004 \\
+    python tests/plan_regression.py                                  # read-only, http://localhost:8003
+    python tests/plan_regression.py --base http://host:8003 \\
         --db-container iw-solo-pixi-essential-postgres-1 \\            # + database checks (docker exec psql)
         --admin pixi:pixipass \\                                      # + checks that need the administrator
         --write \\                                                    # + creates the uploader reg.uploader
@@ -282,8 +282,8 @@ def run(args):
           health["status"] == "ok" and {"version", "db_ms", "llm", "stats_refreshed_at"} <= set(health), health)
     llm = http.json("/api/llm-status")
     check("C4", "LLM status endpoint (enabled / connected / model)", {"enabled", "connected", "model"} <= set(llm), llm)
-    code_docs = http.get("/docs")[0] if args.base.endswith(":8003") else None
-    check("E2", "OpenAPI docs on the API port", None if code_docs is None else code_docs == 200)
+    code_docs = http.get("/docs")[0]
+    check("E2", "OpenAPI docs reachable (/docs)", None if code_docs is None else code_docs == 200)
 
     r1 = http.call("POST", "/api/stats/refresh")
     r2_ = http.call("POST", "/api/stats/refresh")
@@ -373,7 +373,7 @@ def run(args):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--base", default="http://localhost:8004")
+    ap.add_argument("--base", default="http://localhost:8003")
     ap.add_argument("--db-container")
     ap.add_argument("--admin", help="user:password")
     ap.add_argument("--write", action="store_true")

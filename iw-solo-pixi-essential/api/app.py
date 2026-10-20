@@ -6,8 +6,8 @@ IW61x Solo PIXI production-test dashboard — FastAPI entry point.
     db.py      connection pool;  config.py  settings;  errors.py  {"error", "code"} responses
 
 Shared with the desktop tools (one directory up): parsers/, ingestion/.
-The dashboard (web/) is served twice: by nginx on 8004 and by StaticFiles below on the API port
-8003, where users have always opened it.
+The dashboard (web/) is served by nginx on the public port 8003, which passes /api, /health and /docs
+here (the API has no host port). StaticFiles below serves it when the API runs without nginx.
 """
 import logging
 import os
@@ -22,6 +22,7 @@ for _path in (_HERE, os.path.dirname(_HERE)):   # api/ and the shared packages b
 
 from fastapi import FastAPI, Request  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from fastapi.responses import RedirectResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 
 import config  # noqa: E402
@@ -76,6 +77,23 @@ async def timing(request: Request, call_next):
 for module in (system, analytics, auth, admin, tweak, upload, reports):
     app.include_router(module.router)
 app.include_router(tweak.jobs)
+
+# Addresses of the pre-2.0 dashboard (bookmarks such as :8003/work-orders.html) open the matching page.
+LEGACY_PAGES = {
+    "solo_pixi_dashboard": "overview", "work-orders": "workorders", "fail-list": "fails",
+    "fail-analysis": "failanalysis", "bt-analysis": "measurements?tab=bt", "wifi-analysis": "measurements?tab=wifi",
+    "advanced": "measurements?tab=other", "upload": "logupload", "admin": "dbtweak", "alignment": "dataalign",
+}
+
+
+def _legacy_redirect(target):
+    def redirect():
+        return RedirectResponse(f"/#{target}", status_code=307)
+    return redirect
+
+
+for _name, _target in LEGACY_PAGES.items():
+    app.add_api_route(f"/{_name}.html", _legacy_redirect(_target), methods=["GET"], include_in_schema=False)
 
 if os.path.isdir(config.WEB_DIR):
     app.mount("/", StaticFiles(directory=config.WEB_DIR, html=True), name="web")

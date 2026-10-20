@@ -322,6 +322,17 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual((r.status_code, r.json()["code"]), (429, "too_soon"))
         self.assertEqual(self._scalar("SELECT COUNT(*) FROM app_meta WHERE key = 'manual_refresh_at'"), 1)
 
+    def test_pre_2_0_page_addresses_still_open_their_page(self):
+        expected = {"work-orders": "workorders", "fail-list": "fails", "fail-analysis": "failanalysis",
+                    "bt-analysis": "measurements?tab=bt", "wifi-analysis": "measurements?tab=wifi",
+                    "advanced": "measurements?tab=other", "upload": "logupload", "admin": "dbtweak",
+                    "alignment": "dataalign", "solo_pixi_dashboard": "overview"}
+        for old, new in expected.items():
+            r = self.client.get(f"/{old}.html", follow_redirects=False)
+            self.assertEqual((r.status_code, r.headers["location"]), (307, f"/#{new}"), old)
+        self.assertEqual(self.client.get("/work-orders.html?target=//evil", follow_redirects=False).headers["location"],
+                         "/#workorders")
+
     def test_bad_parameters_are_400_not_500(self):
         for params in ({"date_from": "foo"}, {"day": "2026-13-45"}, {"week": 99, "year": 2026}, {"month": 13, "year": 2026},
                        {"week": 3}, {"date_from": "2026-07-22", "date_to": "2026-07-21"}):

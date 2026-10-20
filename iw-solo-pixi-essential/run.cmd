@@ -15,12 +15,12 @@ set retry_count=0
 
 :health_check
 set /a retry_count+=1
-curl -s -f http://localhost:8004/health >nul 2>&1
+curl -s -f http://localhost:8003/health >nul 2>&1
 
 if %ERRORLEVEL% equ 0 (
     echo [SUCCESS] API is healthy!
     echo Opening browser...
-    start http://localhost:8004
+    start http://localhost:8003
     exit /b 0
 )
 

@@ -3,10 +3,10 @@
 // A4 (empty range), 1080p fit, AI-off state, and escaping of user-entered text (S4).
 // Creates/updates the account xss.check on the target, so run it only against a local stack.
 // Needs: npm i playwright-core, a Chrome binary, the administrator pixi / pixipass.
-// Run: BASE=http://localhost:8004 node tests/browser/regression_ui.js
+// Run: BASE=http://localhost:8003 node tests/browser/regression_ui.js
 const { chromium } = require('playwright-core');
 
-const BASE = process.env.BASE || 'http://localhost:8004';
+const BASE = process.env.BASE || 'http://localhost:8003';
 const results = [];
 const check = (item, name, ok, detail = '') => {
     results.push(ok);
@@ -136,6 +136,16 @@ async function api(path, opts = {}) {
           !/saved/i.test(toastText) && /error|fail/i.test(statusText), `status="${statusText}" toast="${toastText}"`);
     await page.unrouteAll({ behavior: 'ignoreErrors' });
     await page.click('#btnLogout').catch(() => {});
+
+    // Addresses of the pre-2.0 dashboard (bookmarks, links) open the matching page
+    for (const [old, page_, tab] of [['/work-orders.html', 'workorders'], ['/bt-analysis.html', 'measurements', 'bt'],
+                                     ['/?page=fails&lang=en', 'fails'], ['/?page=wifi', 'measurements', 'wifi']]) {
+        await page.goto(`${BASE}${old}`, { waitUntil: 'networkidle' });
+        await page.waitForTimeout(400);
+        const shown = await page.evaluate(() => [...document.querySelectorAll('.page')].find(s => !s.hidden)?.id);
+        const tabOk = !tab || (await page.getAttribute(`[data-ms-tab="${tab}"]`, 'aria-selected')) === 'true';
+        check('E1', `old address ${old} opens ${page_}${tab ? ' / ' + tab : ''}`, shown === `page-${page_}` && tabOk, `${shown} ${page.url()}`);
+    }
 
     check('--', 'no uncaught page errors', errors.length === 0, errors.join(' | '));
     await browser.close();

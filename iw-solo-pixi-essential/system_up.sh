@@ -95,10 +95,14 @@ port_belongs_to_existing_service() {
     [[ -n "${published}" && "${published##*:}" == "${port}" ]]
 }
 
+# choose_port <preferred> <service> <container port> [<other service> <its container port>]
+# A port held by this project's own service (or, when upgrading, by the other one named) is free to reuse.
 choose_port() {
     local preferred="$1"
     local service="$2"
     local container_port="$3"
+    local other_service="${4:-}"
+    local other_port="${5:-}"
     local candidate
     local last_candidate
 
@@ -109,7 +113,9 @@ choose_port() {
     for ((candidate = preferred; candidate <= last_candidate; candidate++)); do
         port_is_reserved "${candidate}" && continue
         if port_is_available "${candidate}" ||
-            port_belongs_to_existing_service "${candidate}" "${service}" "${container_port}"; then
+            port_belongs_to_existing_service "${candidate}" "${service}" "${container_port}" ||
+            { [[ -n "${other_service}" ]] &&
+                port_belongs_to_existing_service "${candidate}" "${other_service}" "${other_port}"; }; then
             printf '%s\n' "${candidate}"
             return 0
         fi
@@ -119,29 +125,28 @@ choose_port() {
 }
 
 RESERVED_PORTS=()
-preferred_api="${IW_API_PORT:-$(saved_value IW_API_PORT 8003)}"
-IW_API_PORT="$(choose_port "${preferred_api}" api 8003)"
-RESERVED_PORTS+=("${IW_API_PORT}")
-
-preferred_web="${IW_WEB_PORT:-$(saved_value IW_WEB_PORT 8004)}"
-IW_WEB_PORT="$(choose_port "${preferred_web}" nginx 80)"
+# One public port: nginx serves the dashboard and passes /api, /health and /docs to the API, which has
+# no host port. A .system_up.env from the old two-port layout (IW_API_PORT=8003, IW_WEB_PORT=8004) keeps
+# the address users know: the old API port becomes the dashboard port and the old web port is freed.
+legacy_api_port="$(saved_value IW_API_PORT "")"
+preferred_web="${IW_WEB_PORT:-${legacy_api_port:-$(saved_value IW_WEB_PORT 8003)}}"
+IW_WEB_PORT="$(choose_port "${preferred_web}" nginx 80 api 8003)"
 RESERVED_PORTS+=("${IW_WEB_PORT}")
 
 preferred_db="${IW_DB_PORT:-$(saved_value IW_DB_PORT 5434)}"
 IW_DB_PORT="$(choose_port "${preferred_db}" postgres 5432)"
 RESERVED_PORTS+=("${IW_DB_PORT}")
 
-export IW_API_PORT IW_WEB_PORT IW_DB_PORT
+export IW_WEB_PORT IW_DB_PORT
 if [[ "${SYSTEM_UP_PORT_CHECK_ONLY:-0}" == "1" ]]; then
-    log "Port check only: API=${IW_API_PORT}, Web=${IW_WEB_PORT}, PostgreSQL=${IW_DB_PORT}"
+    log "Port check only: Web=${IW_WEB_PORT}, PostgreSQL=${IW_DB_PORT}"
     exit 0
 fi
 
 umask 077
 runtime_tmp="${RUNTIME_ENV}.tmp.$$"
 trap 'rm -f -- "${runtime_tmp:-}"' EXIT
-printf 'IW_API_PORT=%s\nIW_WEB_PORT=%s\nIW_DB_PORT=%s\n' \
-    "${IW_API_PORT}" "${IW_WEB_PORT}" "${IW_DB_PORT}" >"${runtime_tmp}"
+printf 'IW_WEB_PORT=%s\nIW_DB_PORT=%s\n' "${IW_WEB_PORT}" "${IW_DB_PORT}" >"${runtime_tmp}"
 mv -f -- "${runtime_tmp}" "${RUNTIME_ENV}"
 
 on_error() {
@@ -154,7 +159,7 @@ on_error() {
 trap on_error ERR
 
 log "Project directory: ${APP_DIR}"
-log "Ports: API=${IW_API_PORT}, Web=${IW_WEB_PORT}, PostgreSQL=${IW_DB_PORT}"
+log "Ports: Web + API=${IW_WEB_PORT}, PostgreSQL=${IW_DB_PORT}"
 log "Building and starting Docker Compose services..."
 compose up -d --build --remove-orphans
 # Recreate nginx so its bind mounts (nginx/, web/) point at the current folders even when a deploy
@@ -176,8 +181,7 @@ wait_for_health() {
     fail "${name} health check timed out: ${url}"
 }
 
-wait_for_health "API" "http://127.0.0.1:${IW_API_PORT}/health"
-wait_for_health "Web" "http://127.0.0.1:${IW_WEB_PORT}/health"
+wait_for_health "Web + API" "http://127.0.0.1:${IW_WEB_PORT}/health"
 
 compose ps
 host_address="${IW_PUBLIC_HOST:-$(hostname -I 2>/dev/null | awk '{print $1}')}"
@@ -185,6 +189,5 @@ host_address="${host_address:-127.0.0.1}"
 
 log "Deployment is healthy."
 log "Dashboard: http://${host_address}:${IW_WEB_PORT}/"
-log "API:       http://${host_address}:${IW_API_PORT}/"
-log "API docs:  http://${host_address}:${IW_API_PORT}/docs"
+log "API docs:  http://${host_address}:${IW_WEB_PORT}/docs"
 log "Postgres host port: ${host_address}:${IW_DB_PORT}"

@@ -1,13 +1,13 @@
 // Log Upload file list: add files one at a time, remove one (✕), remove a wrong file type, remove all.
 // Analyses only — nothing is uploaded; each removed analysis is discarded on the server.
 // Needs: npm i playwright-core, a Chrome binary, the administrator pixi / pixipass (or ADMIN_USER /
-// ADMIN_PASS) and the sample station logs under rawlogs/. Run: BASE=http://localhost:8004 node tests/browser/upload_file_list.js
+// ADMIN_PASS) and the sample station logs under rawlogs/. Run: BASE=http://localhost:8003 node tests/browser/upload_file_list.js
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { chromium } = require('playwright-core');
 
-const BASE = process.env.BASE || 'http://localhost:8004';
+const BASE = process.env.BASE || 'http://localhost:8003';
 const LOGS = path.resolve(__dirname, '../../../rawlogs/TN329_IW611_LOG/TN329_IW611_LOG');
 const results = [];
 const check = (name, ok, detail = '') => { results.push(ok); console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${!ok && detail ? '  — ' + detail : ''}`); };

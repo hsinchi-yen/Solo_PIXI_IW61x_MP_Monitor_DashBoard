@@ -1,6 +1,6 @@
 # 部署指南 — IW61x Solo PIXI Dashboard
 
-正式環境：`sit@10.20.31.40:/mnt/md127/iw-solo-pixi-essential`（compose 專案 `iw-solo-pixi-essential`；看板 `http://10.20.31.40:8003`（使用者一直用的網址，API 同一個 port）與 8004（nginx），資料庫 5434）。**port 不可更改。**
+正式環境：`sit@10.20.31.40:/mnt/md127/iw-solo-pixi-essential`（compose 專案 `iw-solo-pixi-essential`；對外只有一個 port：`http://10.20.31.40:8003`（看板＋API，由 nginx 提供，`/api`、`/health`、`/docs` 轉給 API；API 本身不開 host port），資料庫 5434。8004 已停用（2026-10-20）。**port 不可更改。**
 同一台主機上的 `pixi-solo-dashboard`（8001／5433）和其他系統**不要動**。
 
 > 任何正式環境部署都先在本機驗證，經負責人同意後才執行。
@@ -22,9 +22,9 @@ scripts/deploy.sh --delete         # 正式部署（--delete 會移除伺服器�
 |---|---|
 | 1. 備份 | 一天一個資料夾 `oldbackup/<YYMMDD>/`：目前的檔案 → `files_<HHMMSS>.tgz`；資料庫 `pg_dump -Fc` → `pixi_test_<時間>.dump`（任何一個是空的就中止，不做變更） |
 | 2. 同步 | `rsync` 整個 `iw-solo-pixi-essential/`（不含伺服器上的 `.env`、`.system_up.env`、`oldbackup/`、`dbbackup/`） |
-| 3. 建置 | `system_up.sh`：`docker compose up -d --build`、重建 nginx、等健康檢查（port 沿用 `.system_up.env`） |
+| 3. 建置 | `system_up.sh`：`docker compose up -d --build`、重建 nginx、等健康檢查（port 沿用 `.system_up.env`；舊的兩個 port 設定會自動改成單一 port，沿用原本的 API port 8003） |
 | 4. 健康檢查 | `/health` 回 `ok` 且版本號正確、首頁是新版、`/api/summary` 有資料 |
-| 5. 失敗自動還原 | 還原 `files.tgz` 並重新 `system_up.sh`；資料庫不受影響（新增的資料表舊版不會用到） |
+| 5. 失敗自動還原 | 還原 `files.tgz`、停止本專案容器（資料保留，不刪 volume）、重新 `system_up.sh`，舊版回到原本的 port；資料庫不受影響 |
 
 本機演練（不會用到 SSH，也不會碰本機正在跑的看板）：準備一個目錄，放入正式機的舊版檔案、`.env`、`.system_up.env`（例如 `IW_API_PORT=8023`、`IW_WEB_PORT=8024`、`IW_DB_PORT=5444`），再執行：
 
@@ -78,7 +78,7 @@ bash system_up.sh
 
 | 目的 | 指令 |
 |---|---|
-| 狀態 | `docker compose -p iw-solo-pixi-essential ps`；`curl http://localhost:8003/health` |
+| 狀態 | `docker compose -p iw-solo-pixi-essential ps`；`curl http://localhost:8003/health`（經 nginx） |
 | API 日誌（含每個請求耗時、慢查詢） | `docker compose -p iw-solo-pixi-essential logs -f api` |
 | 立即更新統計 | 看板右上「Refresh／立即更新」（10 秒內只能按一次） |
 | 重新啟動 | `docker compose -p iw-solo-pixi-essential restart api` |

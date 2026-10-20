@@ -88,10 +88,10 @@ else
     log "database backup skipped"
 fi
 port_of() { run "sed -n 's/^$1=//p' '$DIR/.system_up.env' 2>/dev/null | tail -1" || true; }
-API_PORT="$(port_of IW_API_PORT)"; API_PORT="${API_PORT:-8003}"
-WEB_PORT="$(port_of IW_WEB_PORT)"; WEB_PORT="${WEB_PORT:-8004}"
+# The port that answers /health: the API port of the old two-port layout, else the single public port.
+health_port() { local p; p="$(port_of IW_API_PORT)"; p="${p:-$(port_of IW_WEB_PORT)}"; printf '%s' "${p:-8003}"; }
 version_of() { sed -n 's/.*"version": *"\([^"]*\)".*/\1/p'; }
-PREV_VERSION="$(run "curl -fsS --max-time 5 http://127.0.0.1:$API_PORT/health" 2>/dev/null | version_of || true)"
+PREV_VERSION="$(run "curl -fsS --max-time 5 http://127.0.0.1:$(health_port)/health" 2>/dev/null | version_of || true)"
 log "running version: ${PREV_VERSION:-pre-2.0}"
 
 # ── 2. Sync ──────────────────────────────────────────────────────────────────
@@ -104,15 +104,17 @@ up() { run "set -o pipefail; cd '$DIR' && COMPOSE_PROJECT_NAME='$PROJECT' bash s
 TRIES=60
 up || { log "system_up.sh reported a failure"; TRIES=5; }
 
-# ── 4. Health check: API version, web app, statistics ────────────────────────
+# ── 4. Health check on the public port (system_up.sh rewrote .system_up.env) ──
+PORT="$(port_of IW_WEB_PORT)"; PORT="${PORT:-8003}"
+log "public port $PORT"
 WANT="$(run "sed -n 's/^APP_VERSION=//p' '$DIR/.env' 2>/dev/null | tail -1" || true)"   # the server's .env wins
 WANT="${WANT:-$(sed -n 's/^APP_VERSION = os.environ.get("APP_VERSION", "\(.*\)")/\1/p' "$SRC/api/config.py")}"
 healthy=0
 for _ in $(seq 1 "$TRIES"); do
-    body="$(run "curl -fsS --max-time 5 http://127.0.0.1:$API_PORT/health" 2>/dev/null || true)"
+    body="$(run "curl -fsS --max-time 5 http://127.0.0.1:$PORT/health" 2>/dev/null || true)"
     if [[ "$body" == *'"status":"ok"'* && "$(printf '%s' "$body" | version_of)" == "${WANT}" ]]; then
-        if run "curl -fsS --max-time 5 http://127.0.0.1:$WEB_PORT/ | grep -q 'js/main.js'" \
-           && run "curl -fsS --max-time 10 http://127.0.0.1:$WEB_PORT/api/summary | grep -q '\"units\"'"; then
+        if run "curl -fsS --max-time 5 http://127.0.0.1:$PORT/ | grep -q 'js/main.js'" \
+           && run "curl -fsS --max-time 10 http://127.0.0.1:$PORT/api/summary | grep -q '\"units\"'"; then
             healthy=1
             break
         fi
@@ -131,9 +133,12 @@ log "health check FAILED — restoring $FILES_TGZ"
 # Older versions bind-mounted the code, so the container left root-owned __pycache__ folders that
 # cannot be removed here; ignore those and extract the backup over whatever is left.
 run "cd '$DIR' && { find . -mindepth 1 -maxdepth 1 ! -name oldbackup ! -name dbbackup ! -name .env ! -name .system_up.env -exec rm -rf {} + 2>/dev/null || true; } && tar xzf '$FILES_TGZ'"
+# Stop this project's containers (data volumes are kept) so the restored version gets back exactly the
+# ports in its .system_up.env; otherwise a port held by the failed version would push it to the next one.
+run "cd '$DIR' && $COMPOSE down --remove-orphans" || true
 up || true
 for _ in $(seq 1 40); do
-    if run "curl -fsS --max-time 5 http://127.0.0.1:$API_PORT/health" >/dev/null 2>&1; then
+    if run "curl -fsS --max-time 5 http://127.0.0.1:$(health_port)/health" >/dev/null 2>&1; then
         die "deploy failed; previous version restored and healthy (database untouched; $DB_NOTE)"
     fi
     sleep 3

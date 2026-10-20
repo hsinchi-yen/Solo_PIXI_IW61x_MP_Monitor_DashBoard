@@ -153,9 +153,9 @@
 ```bash
 cd iw-solo-pixi-essential
 # 計畫項目（唯讀；部署後也可以在伺服器上跑）
-python3 tests/plan_regression.py --base http://localhost:8004 --db-container iw-solo-pixi-essential-postgres-1
+python3 tests/plan_regression.py --base http://localhost:8003 --db-container iw-solo-pixi-essential-postgres-1
 # 本機完整版（會建立 reg.uploader 帳號、產生一份 AI 報告）
-python3 tests/plan_regression.py --base http://localhost:8004 --db-container iw-solo-pixi-essential-postgres-1 \
+python3 tests/plan_regression.py --base http://localhost:8003 --db-container iw-solo-pixi-essential-postgres-1 \
     --admin pixi:pixipass --write --llm --json /tmp/plan.json
 # 瀏覽器（需要 playwright-core 與 Chrome）
 node tests/browser/dashboard.js

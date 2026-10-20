@@ -250,11 +250,21 @@ function renderOther(o, retries) {
 }
 
 /* ─── Tabs and loading ─── */
-function showTab(name) {
+function selectTab(name) {
     tab = name;
     $$('[data-ms-tab]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.msTab === name)));
     $$('[data-ms-view]').forEach(v => { v.hidden = v.dataset.msView !== name; });
+}
+
+function showTab(name) {
+    selectTab(name);
     renderTab();
+}
+
+/** #measurements?tab=bt (links from the old BT / Wi-Fi / Advanced pages) opens that tab. */
+function tabFromHash() {
+    const want = new URLSearchParams(location.hash.split('?')[1] || '').get('tab');
+    if (want && want !== tab && $(`[data-ms-tab="${want}"]`)) selectTab(want);
 }
 
 function renderTab() {
@@ -266,6 +276,7 @@ function renderTab() {
 }
 
 async function load(app) {
+    tabFromHash();
     const key = app.scopeKey();
     const mine = ++seq;
     if (key !== dataKey) { data = null; items = []; }

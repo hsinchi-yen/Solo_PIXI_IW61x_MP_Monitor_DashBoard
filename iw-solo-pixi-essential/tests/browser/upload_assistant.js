@@ -5,7 +5,7 @@
 // UPLOADER_PASS (no built-in test account), the
 // administrator pixi / pixipass and AI enabled. Run: node tests/browser/upload_assistant.js <zip> <screenshot dir>
 const { chromium } = require('playwright-core');
-const BASE = process.env.BASE || 'http://localhost:8004';
+const BASE = process.env.BASE || 'http://localhost:8003';
 const ZIP = process.argv[2];
 const { UPLOADER_USER, UPLOADER_PASS } = process.env;
 if (!UPLOADER_USER || !UPLOADER_PASS) {

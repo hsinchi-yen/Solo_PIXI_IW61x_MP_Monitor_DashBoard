@@ -25,10 +25,10 @@ single page and its API were removed in 2.0 (decision Q28).
 ```bash
 cd iw-solo-pixi-essential
 ./system_up.sh          # Linux: build, start, wait for health, print the URLs
-run.cmd                 # Windows: the same, then opens http://localhost:8004
+run.cmd                 # Windows: the same, then opens http://localhost:8003
 ```
 
-- Dashboard: http://localhost:8004
+- Dashboard: http://localhost:8003 (one public port; nginx passes `/api`, `/health`, `/docs` to the API)
 - API: http://localhost:8003/health, http://localhost:8003/docs
 
 Settings live in `.env` next to `docker-compose.yml` (template: `.env.example`).
@@ -136,9 +136,12 @@ code, runs `system_up.sh`, checks health and restores the previous files automat
 
 | Service | Default host port | Override |
 |---------|------------------:|----------|
-| Nginx | 8004 | `IW_WEB_PORT` |
-| FastAPI | 8003 | `IW_API_PORT` |
+| Nginx (dashboard + API) | 8003 | `IW_WEB_PORT` |
+| FastAPI | — (internal only, container port 8003) | |
 | PostgreSQL | 5434 | `IW_DB_PORT` |
+
+Until 2026-10-20 nginx used 8004 and the API 8003; `system_up.sh` moves an old two-port
+`.system_up.env` to the single port automatically (the old API port is kept as the address).
 
 `system_up.sh` searches the next 100 ports when one is taken and saves the choice in
 `.system_up.env` (`SYSTEM_UP_PORT_CHECK_ONLY=1` to only check).

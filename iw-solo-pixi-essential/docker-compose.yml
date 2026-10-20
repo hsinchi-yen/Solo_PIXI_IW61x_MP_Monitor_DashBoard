@@ -44,8 +44,9 @@ services:
       REPORT_DAILY_AT: ${REPORT_DAILY_AT:-18:00}
       DB_POOL_MAX: ${DB_POOL_MAX:-8}
       UPLOAD_TMP_DIR: /tmp/iw_uploads
-    ports:
-      - "${IW_API_PORT:-8003}:8003"
+    # Internal only: nginx is the one public port and passes /api, /health and /docs to it.
+    expose:
+      - "8003"
     volumes:
       # Uploads between analyze and commit; shared by both workers, kept across restarts.
       - iw-pixi-uploads:/tmp/iw_uploads
@@ -64,7 +65,8 @@ services:
   nginx:
     image: nginx:1.27-alpine
     ports:
-      - "${IW_WEB_PORT:-8004}:80"
+      # The single public port (dashboard + API), http://<host>:8003 as users have always opened it.
+      - "${IW_WEB_PORT:-8003}:80"
     restart: unless-stopped
     volumes:
       - ./nginx:/etc/nginx/conf.d:ro

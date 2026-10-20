@@ -34,6 +34,21 @@ export const app = {
 };
 
 /* ─── Routing ─── */
+// Links of the pre-2.0 dashboard used ?page=<id>; open the matching page (and measurement tab).
+const LEGACY_PAGE = {
+    overview: 'overview', workorders: 'workorders', fails: 'fails', failanalysis: 'failanalysis',
+    bt: 'measurements?tab=bt', wifi: 'measurements?tab=wifi', advanced: 'measurements?tab=other',
+    upload: 'logupload', dbtweak: 'dbtweak', dataalign: 'dataalign',
+};
+function translateLegacyLink() {
+    const params = new URLSearchParams(location.search);
+    const target = LEGACY_PAGE[params.get('page')];
+    if (!target || location.hash) return;
+    params.delete('page');
+    const rest = params.toString();
+    history.replaceState(null, '', `${location.pathname}${rest ? `?${rest}` : ''}#${target}`);
+}
+
 function pageFromHash() {
     const id = location.hash.replace(/^#/, '').split('?')[0];
     return byId[id] ? id : 'overview';
@@ -289,6 +304,7 @@ async function start() {
         else toast(t('rp.noLatest'));
     });
     window.addEventListener('hashchange', () => show(pageFromHash()));
+    translateLegacyLink();
 
     await Promise.all([loadMeta(), loadOptions(), auth.restore()]);
     app.scope.workOrder = app.latestWorkOrder();     // default: the latest work order (Q3)

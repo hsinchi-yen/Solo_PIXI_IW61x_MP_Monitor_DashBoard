@@ -1,9 +1,9 @@
-// New dashboard (web/index.html) against a running stack (default http://localhost:8004).
+// New dashboard (web/index.html) against a running stack (default http://localhost:8003).
 // Needs: npm i playwright-core, a Chrome binary, data for work order 5101-260715003 and the
 // default administrator pixi / pixipass. Run: node tests/browser/dashboard.js
 const { chromium } = require('playwright-core');
 
-const BASE = process.env.BASE || 'http://localhost:8004';
+const BASE = process.env.BASE || 'http://localhost:8003';
 const PAGES = ['overview', 'workorders', 'fails', 'measurements', 'failanalysis', 'dbtweak', 'dataalign', 'logupload', 'accounts'];
 const results = [];
 const check = (name, ok, detail = '') => { results.push(ok); console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? '  — ' + detail : ''}`); };
