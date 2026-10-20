@@ -14,6 +14,7 @@ from services.filters import Scope, parse_scope, raw_where
 from services.ingest import file_name, parse_quantity, validate_upload
 from services.report_text import check_numbers
 from ingestion.postgres import PostgresRunRepository
+from ingestion.service import BatchReport, FileIngestionResult
 
 ROOT = Path(__file__).resolve().parents[2]
 PASS_LOG = ROOT / "rawlogs" / "5101-260715003" / "20260721_142350_001F7B5806CA_001F7B5806CB_PASS.txt"
@@ -165,6 +166,20 @@ class SavepointTests(unittest.TestCase):
             repo.save(parsed)
         issue_rows = execute_values.call_args_list[-1].args[2]
         self.assertTrue(all(row[1] == 9 for row in issue_rows))
+
+    def test_batch_without_work_order_takes_the_resolved_one(self):
+        # Desktop uploader: work order comes from the folder name, not from begin_batch.
+        cursor = RecordingCursor()
+        repo = PostgresRunRepository(RecordingConnection(cursor))
+        repo.batch_id = 3
+        one = BatchReport(total_files=2, files=[FileIngestionResult("a.txt", "uploaded", work_order="5101-260715003"),
+                                                FileIngestionResult("b.txt", "duplicate", work_order="5101-260715003")])
+        repo.finish_batch(one)
+        self.assertEqual(cursor.statements[-1][1][-2:], ("5101-260715003", 3))
+        two = BatchReport(files=[FileIngestionResult("a.txt", "uploaded", work_order="5101-260715003"),
+                                 FileIngestionResult("c.txt", "uploaded", work_order="5101-260801001")])
+        repo.finish_batch(two)
+        self.assertEqual(cursor.statements[-1][1][-2:], (None, 3))
 
 
 if __name__ == "__main__":

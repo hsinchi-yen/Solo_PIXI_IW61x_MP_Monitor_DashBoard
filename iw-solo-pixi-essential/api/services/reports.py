@@ -22,7 +22,7 @@ from datetime import datetime
 
 import config
 import db
-from errors import Msg, not_found
+from errors import ApiError, Msg, not_found
 from services import llm, measurements, stats
 from services.filters import Scope
 from services.report_text import (ASK_PROMPT, LANGS, REPORT_SCHEMA, SYSTEM_PROMPT, check_numbers,  # noqa: F401
@@ -232,8 +232,10 @@ def generate(work_order, trigger="manual", requested_by=None, on_event=None, row
             return row_id
         except Exception as exc:
             if row_id:
-                db.execute(conn, "UPDATE ai_reports SET status = 'failed', error = %s, finished_at = NOW() WHERE id = %s",
-                           (str(exc)[:300], row_id))
+                # The data can be gone by the time a queued job runs (upload undone, records deleted).
+                no_data = isinstance(exc, ApiError) and exc.code == "no_data"
+                db.execute(conn, "UPDATE ai_reports SET status = %s, error = %s, finished_at = NOW() WHERE id = %s",
+                           ("skipped" if no_data else "failed", "no data" if no_data else str(exc)[:300], row_id))
             raise
         finally:
             _unlock(conn, _wo_lock_key(work_order))
@@ -288,9 +290,9 @@ def process_queue_once():
                     db.execute(conn, "UPDATE ai_reports SET status = 'skipped', error = 'busy', finished_at = NOW() WHERE id = %s",
                                (job["id"],))
                 except Exception as exc:
-                    log.warning("queued report %s for %s failed: %s", job["id"], job["work_order"], exc)
+                    log.warning("queued report %s for %s not generated: %s", job["id"], job["work_order"], exc)
                     db.execute(conn, "UPDATE ai_reports SET status = 'failed', error = %s, finished_at = NOW() "
-                                     "WHERE id = %s AND status <> 'done'", (str(exc)[:300], job["id"]))
+                                     "WHERE id = %s AND status NOT IN ('done', 'skipped')", (str(exc)[:300], job["id"]))
                 done += 1
         finally:
             _unlock(conn, config.REPORT_WORKER_LOCK_KEY)

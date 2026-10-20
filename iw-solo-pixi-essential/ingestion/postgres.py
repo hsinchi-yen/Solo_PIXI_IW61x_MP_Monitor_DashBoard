@@ -41,15 +41,19 @@ class PostgresRunRepository:
     def finish_batch(self, report) -> None:
         if self.batch_id is None:
             return
+        # A batch started without a work order (desktop uploader, folder-derived) takes the one
+        # work order its files resolved to; batches spanning several work orders stay blank.
+        resolved = {f.work_order for f in getattr(report, "files", []) if f.work_order}
         with self.conn.cursor() as cur:
             cur.execute(
                 """
                 UPDATE upload_batches
-                SET total_files = %s, uploaded = %s, duplicates = %s, rejected = %s, warnings = %s
+                SET total_files = %s, uploaded = %s, duplicates = %s, rejected = %s, warnings = %s,
+                    work_order = COALESCE(work_order, %s)
                 WHERE id = %s
                 """,
                 (report.total_files, report.uploaded, report.duplicates, report.rejected, report.warnings,
-                 self.batch_id),
+                 resolved.pop() if len(resolved) == 1 else None, self.batch_id),
             )
 
     # ------------------------------------------------------------------

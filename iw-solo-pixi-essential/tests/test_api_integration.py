@@ -264,6 +264,25 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertTrue(latest["has_data"])
         self.assertFalse(latest["llm"]["enabled"])
 
+    def test_queued_report_for_a_removed_work_order_is_skipped(self):
+        # An upload queues a report; if the upload is undone before the worker runs it, the job
+        # finds no data and must be recorded as skipped, not failed.
+        import config
+        from services import reports
+        with self.db_module.db() as conn:
+            job = self.db_module.fetch_one(conn, "INSERT INTO ai_reports (work_order, status, trigger) "
+                                                 "VALUES ('9999-000000000', 'queued', 'upload') RETURNING id")["id"]
+        original = config.llm_configured
+        config.llm_configured = lambda: True
+        try:
+            reports.process_queue_once()
+        finally:
+            config.llm_configured = original
+        with self.db_module.db() as conn:
+            row = self.db_module.fetch_one(conn, "SELECT status, error FROM ai_reports WHERE id = %s", (job,))
+            self.db_module.execute(conn, "DELETE FROM ai_reports WHERE id = %s", (job,))
+        self.assertEqual((row["status"], row["error"]), ("skipped", "no data"))
+
     # ── input validation ─────────────────────────────────────────────────────
     def test_bad_parameters_are_400_not_500(self):
         for params in ({"date_from": "foo"}, {"day": "2026-13-45"}, {"week": 99, "year": 2026}, {"month": 13, "year": 2026},
