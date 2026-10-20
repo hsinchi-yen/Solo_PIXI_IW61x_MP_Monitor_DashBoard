@@ -6,7 +6,7 @@
 | 參考 | pixi-dashboard（`Solo_PIXI_MP_Monitor_DashBoard`）v3.1.0 的 `improve_plan.md` 與實作 |
 | 範圍 | `iw-solo-pixi-essential/`（看板、API、匯入、部署）；桌面 uploader 只修共用程式 |
 | 調查方式 | 正式機程式與 DB 已對齊到本機（見 `docs/sync/remote_diff_261020.md`）；逐檔審閱前後端，在本機實測 API、SQL（EXPLAIN）、無頭 Chrome、AI 報告 |
-| 狀態 | 第 1＋2＋3＋4 階段**本機完成**（見第 6 節，v2.0.0）；尚未部署到正式機；第 5 階段（部署流程）未開始 |
+| 狀態 | 第 1–5 階段**本機完成**（見第 6 節，v2.0.0）；2026-10-20 回歸測試全部通過（`docs/test_report_261020.md`）；尚未部署到正式機 |
 
 ---
 
@@ -138,7 +138,7 @@
 - **程式預設 `LLM_ENABLED=false`、不寫死內部網址；正式機 `.env` 開啟**並設 `LLM_API_BASE`、`LLM_MODEL=Qwen3.8-27B-UD-Q6_K_L`（Q13）；同步更新 AGENTS.md；LLM 離線時按鈕灰掉並提示。0.5 天。
 
 ### D. 安全
-- S1：compose 傳入 `ADMIN_*`，`ADMIN_SECRET` 未設定時拒絕啟動；正式機 `.env` 補上隨機金鑰（部署時做）。
+- S1：compose 傳入 `ADMIN_*`，`ADMIN_SECRET` 未設定時拒絕啟動；正式機 `.env` 補上隨機金鑰（部署時做）。（實作改為資料庫保存的 session token，不再有簽章金鑰，見第 6 節。）
 - S1 修正**隨第 1 階段一起部署**（Q17）。
 - S2（Q14）：沿用 pixi-dashboard 的帳號機制，分**管理者**（刪除、改 Alignment 目標、管理帳號）與**上傳者**（上傳、下載 raw log）；看板瀏覽不需登入。
 - S3／S4：只接受 `Authorization` header；刪除需二次確認；CORS 限定來源；DOMPurify。
@@ -188,8 +188,8 @@
 ## 5. 第 2＋3＋4 階段實作方式（Q18–Q25）
 
 1. **後端結構**同 pixi-dashboard v3：`api/routers/`（system、analytics、auth、admin、tweak、upload、reports、legacy）＋`api/services/`（stats、measurements、filters、llm、reports、report_text、upload_chat、ingest、migrations、scheduler）。程式碼打包進 image，開發時用 `docker-compose.dev.yml` 掛載原始碼。
-2. **舊 API 不變**：舊單檔頁面用的端點搬到 `routers/legacy.py`，回應格式不改，`/legacy.html` 照常可用。
-3. **新增物件**（只新增，不改既有表）：`upload_log`（上傳批次、對話、驗證結果）、`upload_runs`（批次 ↔ `test_results.id`，撤銷用）、`ai_reports`、`app_meta`、`job_runs`，materialized view `mv_unit`（每台機器每張工單的首次／最後／任一 PASS）與 `mv_metric_day`（每天每個 metric 的筆數、平均、標準差、最小／最大、規格、失敗數，用來算 margin／Cpk）。
+2. **舊 API 不變**：舊單檔頁面用的端點搬到 `routers/legacy.py`，回應格式不改，`/legacy.html` 照常可用。（後來依 Q28 在部署時移除。）
+3. **新增物件**（只新增，不改既有表）：`upload_log`（上傳批次、對話、驗證結果）、`upload_runs`（批次 ↔ `test_results.id`，撤銷用）、`ai_reports`、`app_meta`、`job_runs`，materialized view `mv_unit`（每台機器每張工單的首次／最後／任一 PASS）與 `mv_metric_day`（每天每個 metric 的筆數、平均、標準差、最小／最大、規格、失敗數，用來算 margin／Cpk）。（實作改為只重算變動工單的 `metric_day` 資料表；`run_summary` 未建立，見測試報告第 5 節。）
 4. **前端**以 pixi-dashboard 的 `web/` 為底（側欄、頂部篩選列、KPI 卡片、圖表面板、Dark／Light、英文預設＋中文切換），內容換成 IW611：首頁（Q1、Q2）、工單、Fail List、Fail Analysis、量測分析（BT／WiFi／其他頁籤，Q8）、DB Tweak、Data Alignment、Log Uploader（AI 助理）、帳號管理。
 5. **AI 上傳助理**：上傳 zip → 伺服器切檔分析（不寫 DB）→ AI 對話問工單號與計畫數（規則決定、AI 只負責對話；LLM 離線自動改表單）→ 確認後背景寫入並串流進度 → 紀錄可查、可撤銷。
 6. **AI 報告**：事實表（Q11）＋固定格式 JSON、數字由程式填、輸出檢查；中英兩版；上傳後自動＋每日 18:00＋手動（Q12）；`ai_reports` 保存與比較；thinking 關閉、模型 `Qwen3.8-27B-UD-Q6_K_L`。
@@ -334,3 +334,13 @@
 驗證中發現並修正 2 個小問題：
 - 上傳後排入的 AI 報告，如果執行前資料已被撤銷，會記成「失敗」→ 改記「略過（no data）」。
 - 桌面上傳程式的批次在 `upload_batches` 沒有工單號（由資料夾名稱決定）→ 批次結束時補上檔案解析出的唯一工單號（只寫入既有欄位的值，結構不變）。
+
+### 回歸測試（2026-10-20，commit `1363a0f`）
+
+完整報告：`docs/test_report_261020.md`。在正式機副本（舊版檔案＋正式機資料庫 → `deploy.sh` 升級）與本機各跑一次：
+計畫項目檢查 56/56、pytest 71＋39、瀏覽器 34/34＋16/16、AI 上傳助理 16/16、桌面上傳、升級與自動還原、每日備份全部通過；
+舊版對照 10 項舊 bug 在舊版重現、在 v2.0 消失。新增測試工具 `tests/plan_regression.py`（部署後可在伺服器唯讀執行）與 `tests/browser/regression_ui.js`。
+
+本輪修正：網頁上傳改為依內容辨識 IQfact log（改名的 Log_all、`IW611_PASS_LOG.txt`、`.log`、zip 裡的 zip；使用者回報）；
+首頁讀取失敗加「重試」；「立即更新」的 10 秒限制改存資料庫（2 個 worker 共用）。
+與計畫不同或未完成：`run_summary` 未建（改用 `metric_day`）、索引整理不做（Q19）、5 萬筆效能只測到 1 萬筆、CI、未使用的 `marked`／`purify`、`ADMIN_PASS`。
