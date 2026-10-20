@@ -62,9 +62,10 @@ class ProjectContractTests(unittest.TestCase):
         web = ROOT / "web"
         for rel in ["index.html", "css/theme.css", "css/base.css", "css/pages.css", "js/main.js",
                     "js/report.js", "js/core/api.js", "js/core/i18n.js", "js/core/strings.en.js",
-                    "js/core/strings.zh.js", "vendor/chart.umd-4.4.1.min.js", "vendor/marked-12.0.1.min.js",
-                    "vendor/purify-3.1.6.min.js"]:
+                    "js/core/strings.zh.js", "vendor/chart.umd-4.4.1.min.js"]:
             self.assertTrue((web / rel).exists(), rel)
+        # Reports are rendered as escaped text, not Markdown, so no Markdown parser / sanitizer is shipped.
+        self.assertEqual(sorted(p.name for p in (web / "vendor").iterdir()), ["chart.umd-4.4.1.min.js"])
         for page in ["overview", "workorders", "fails", "measurements", "failanalysis", "dbtweak", "dataalign",
                      "logupload", "accounts"]:
             self.assertTrue((web / "js" / "pages" / f"{page}.js").exists(), page)

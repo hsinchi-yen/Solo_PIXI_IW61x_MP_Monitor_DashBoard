@@ -205,7 +205,7 @@
 | S1 token 可偽造 | 改成 pixi-dashboard 的做法：登入 token 是亂數，DB 只存 SHA-256（`app_sessions`），**沒有簽章金鑰**；改 `ADMIN_PASS` 會讓舊的管理者登入失效。compose 傳入 `ADMIN_USER`／`ADMIN_PASS`；用預設密碼時 API 會記警告 | 舊格式（預設金鑰自簽）的 token → 401 |
 | S2 不用登入就能寫入 | Alignment 目標、上傳、raw log、DB Tweak、reparse 都要登入；**管理者**／**上傳者**兩種角色（Q14），上傳者帳號在 `app_users` | 未登入 401、上傳者做管理動作 403 |
 | S3 | token 只接受 `X-Tweak-Token` header（不再接受網址 `?token=`）；刪除需 `confirm=DELETE`；CORS 預設只允許同源；帳號、目標、刪除、上傳、reparse 都寫入 `account_audit` | 測試 |
-| S4 | 統一錯誤格式 `{error, error_zh, detail, code}`，不回傳例外原文；`source_file` 畫面與 API 只顯示檔名（DB 保留原值，Q10）；AI 報告 Markdown 經 DOMPurify 3.1.6 | 測試＋瀏覽器 |
+| S4 | 統一錯誤格式 `{error, error_zh, detail, code}`，不回傳例外原文；`source_file` 畫面與 API 只顯示檔名（DB 保留原值，Q10）；AI 報告 Markdown 經 DOMPurify 3.1.6（v2.0 改為結構化顯示並逐字跳脫，`marked`／`purify` 已於 2026-10-20 移除） | 測試＋瀏覽器 |
 | R1 連線外洩 | 每個 worker 一個連線池，例外時一定歸還 | 60 次錯誤＋正常請求後連線數不增加 |
 | R2 錯誤參數 500 | `day` 必須是日期、`month` 1–12、`week` 1–53、`year` 2000–2100、`page_size` 數字或 All；Alignment 目標必須是整數 | 一律 400 |
 | R3 匯入中斷 | 每個檔案一個 SAVEPOINT，單檔失敗只回滾該檔；網頁與桌面上傳都寫 `upload_batches`，`data_quality_issues.batch_id` 有值；上傳在背景執行緒處理，不卡住 API | 測試 |
