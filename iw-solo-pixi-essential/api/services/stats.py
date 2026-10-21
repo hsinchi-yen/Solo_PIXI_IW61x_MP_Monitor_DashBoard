@@ -13,7 +13,7 @@ import logging
 import threading
 import time
 from collections import OrderedDict
-from datetime import date, timedelta
+from datetime import date, datetime, time as dtime, timedelta
 
 import config
 import db
@@ -177,6 +177,48 @@ def hourly(conn, scope: Scope, hours=24):
         LEFT JOIN data d ON d.t = s.t ORDER BY s.t
     """, p2 + [start, start, end])
     return {"hours": hours, "points": rows}
+
+
+def hourly_output(conn, scope: Scope):
+    """Test runs per hour (PASS / FAIL / STOP) inside config.WORK_HOURS of one day: the selected
+    work order (or the latest one in scope), on its latest day in scope with runs in those hours.
+    `outside` counts that day's runs before / after the work hours (same as pixi-dashboard)."""
+    start, end = config.WORK_HOURS
+    wo = scope.work_order
+    if not wo:
+        where, params = mv_where(scope, ["wo_key <> ''"])
+        row = db.fetch_one(conn, f"""
+            SELECT wo_key FROM mv_unit_day {where} GROUP BY wo_key ORDER BY MAX(last_time) DESC, wo_key LIMIT 1
+        """, params)
+        wo = row["wo_key"] if row else None
+    empty = {"work_order": wo, "date": None, "start": start, "end": end, "points": [], "outside": 0}
+    if not wo:
+        return empty
+    where, params = raw_where(Scope(scope.date_from, scope.date_to, wo),
+                              ["start_time::time >= %s", "start_time::time < %s"])
+    day = db.fetch_one(conn, f"SELECT MAX(start_time::date) AS d FROM test_results {where}",
+                       params + [dtime(start), dtime(end)])["d"]
+    if day is None:
+        return empty
+    lo, hi = datetime.combine(day, dtime(start)), datetime.combine(day, dtime(end))
+    points = db.fetch_all(conn, """
+        WITH data AS (
+            SELECT EXTRACT(HOUR FROM start_time)::int AS hour,
+                   COUNT(*) FILTER (WHERE result = 'PASS') AS pass,
+                   COUNT(*) FILTER (WHERE result = 'FAIL') AS fail,
+                   COUNT(*) FILTER (WHERE result = 'STOP') AS stop
+            FROM test_results WHERE work_order = %s AND start_time >= %s AND start_time < %s
+            GROUP BY 1
+        )
+        SELECT h.hour, COALESCE(d.pass, 0) AS pass, COALESCE(d.fail, 0) AS fail, COALESCE(d.stop, 0) AS stop
+        FROM generate_series(%s, %s) AS h(hour) LEFT JOIN data d ON d.hour = h.hour
+        ORDER BY h.hour
+    """, [wo, lo, hi, start, end - 1])
+    outside = db.fetch_one(conn, """
+        SELECT COUNT(*) AS n FROM test_results
+        WHERE work_order = %s AND start_time >= %s AND start_time < %s AND (start_time < %s OR start_time >= %s)
+    """, [wo, datetime.combine(day, dtime()), datetime.combine(day + timedelta(days=1), dtime()), lo, hi])["n"]
+    return {**empty, "date": day, "points": points, "outside": outside}
 
 
 def top_fail_steps(conn, scope: Scope, limit=5):

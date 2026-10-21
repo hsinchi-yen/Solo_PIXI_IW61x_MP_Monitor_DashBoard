@@ -33,8 +33,29 @@ const check = (name, ok, detail = '') => { results.push(ok); console.log(`${ok ?
     const views = await page.textContent('#ovViews');
     check('first-pass and any-pass shown beside it', views.includes('72.50%') && views.includes('99.17%'), views);
     check('units and runs kept apart', (await page.textContent('#ovUnitsSub')).includes('180 test runs'));
-    check('four charts drawn', await page.$$eval('.ov-charts canvas', cs => cs.every(c => c.width > 0)) &&
+    check('four charts drawn', await page.$$eval('.ov-charts canvas', cs => cs.length === 4 && cs.every(c => c.width > 0)) &&
           (await page.$$('.ov-charts .state-msg')).length === 0);
+
+    // pixi-dashboard 3.2 layout: doughnut left of the yield, seven boxes in one row at 1920, Hourly Output 07:00–19:00
+    const boxes = await page.$$eval('.ov-numbers > div', els => els.map(e => [e.className, Math.round(e.getBoundingClientRect().top)]));
+    check('doughnut is the first box, left of the yield', boxes[0][0] === 'ov-split' && boxes[1][0] === 'ov-hero', boxes.map(b => b[0]).join(','));
+    check('seven boxes in one row at 1920 px', boxes.length === 7 && boxes.every(b => b[1] === boxes[0][1]), JSON.stringify(boxes));
+    check('Out of Spec is no longer on the dashboard', !(await page.textContent('#page-overview')).includes('Out of Spec'));
+    const wrapped = await page.$$eval('.ov-num .value', els => els.filter(e => e.scrollWidth > e.clientWidth + 1).length);
+    check('big numbers fit their boxes', wrapped === 0, `${wrapped} overflow`);
+    check('doughnut drawn', await page.$eval('#chOvSplit', c => c.width > 0) && !(await page.$('.ov-split .state-msg')));
+    const hourNote = await page.textContent('#ovHourlyNote');
+    check('Hourly Output names the day, 07:00–19:00 and the work order', /07:00–19:00 · 5101-260715003 · \d+ passed/.test(hourNote), hourNote);
+    check('two monthly charts cover all work orders', (await page.textContent('#ovMonthlyFailNote')).includes('all work orders'));
+    const fit = await page.evaluate(() => [document.scrollingElement.scrollHeight, window.innerHeight]);
+    check('dashboard fits 1920×1080 without scrolling', fit[0] <= fit[1] + 2, fit.join(' > '));
+    for (const [w, h] of [[1440, 900], [390, 844]]) {
+        await page.setViewportSize({ width: w, height: h });
+        await page.waitForTimeout(500);
+        const over = await page.evaluate(() => document.scrollingElement.scrollWidth > window.innerWidth + 1);
+        check(`no sideways scrolling at ${w} px`, !over);
+    }
+    await page.setViewportSize({ width: 1920, height: 1080 });
 
     // Measurements: spec check, row → histogram
     await page.goto(`${BASE}/?lang=en#measurements`, { waitUntil: 'networkidle' });
@@ -86,6 +107,31 @@ const check = (name, ok, detail = '') => { results.push(ok); console.log(`${ok ?
     await page.goto(`${BASE}/?lang=en#accounts`, { waitUntil: 'networkidle' });
     check('accounts page opens', !(await page.isHidden('#acctPanel')));
     await page.click('#btnLogout');
+
+    // Uploaders get 中文 while signed in (pixi-dashboard Q53–Q55); the browser's own choice comes back after sign-out.
+    // Uses the account lang.check on the target (created, then disabled), so run it only against a local stack.
+    const api = async (path, opts = {}) => (await fetch(BASE + path, { ...opts, headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) } })).json();
+    const adm = await api('/api/auth/login', { method: 'POST', body: JSON.stringify({ username: 'pixi', password: 'pixipass' }) });
+    const H = { 'X-Tweak-Token': adm.token };
+    const pw = 'lang-check-1';
+    await api('/api/admin/users', { method: 'POST', headers: H, body: JSON.stringify({ username: 'lang.check', display_name: 'Lang Check', password: pw }) });
+    await api('/api/admin/users/lang.check', { method: 'PATCH', headers: H, body: JSON.stringify({ enabled: true }) });
+    await api('/api/admin/users/lang.check/reset-password', { method: 'POST', headers: H, body: JSON.stringify({ password: pw }) });
+    await page.goto(`${BASE}/?lang=en#logupload`, { waitUntil: 'networkidle' });
+    check('upload menu item reads 上傳 Log in English too', (await page.textContent('[data-page="logupload"]')).includes('上傳 Log'));
+    await page.fill('#luUser', 'lang.check');
+    await page.fill('#luPass', pw);
+    await page.click('#btnLuLogin');
+    await page.waitForSelector('#luPanel:not([hidden])');
+    await page.waitForTimeout(400);
+    check('an uploader signing in gets 中文', await page.evaluate(() => document.documentElement.lang) === 'zh-Hant-TW'
+          && (await page.textContent('[data-page="overview"]')).includes('儀表板'));
+    await page.click('#btnLogout');
+    await page.waitForTimeout(400);
+    check('signing out brings English back', await page.evaluate(() => document.documentElement.lang) === 'en'
+          && (await page.textContent('[data-page="overview"]')).includes('Dashboard'));
+    await api('/api/admin/users/lang.check', { method: 'PATCH', headers: H, body: JSON.stringify({ enabled: false }) });
+    await api('/api/auth/logout', { method: 'POST', headers: H });
 
     await browser.close();
     const failed = results.filter(ok => !ok).length;

@@ -26,7 +26,7 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-pixi}:${POSTGRES_PASSWORD:-pixipass}@postgres:5432/${POSTGRES_DB:-pixi_test}
-      APP_VERSION: ${APP_VERSION:-2.0.0}
+      APP_VERSION: ${APP_VERSION:-2.1.0}
       APP_TZ: ${APP_TZ:-Asia/Taipei}
       TZ: ${APP_TZ:-Asia/Taipei}
       ADMIN_USER: ${ADMIN_USER:-pixi}

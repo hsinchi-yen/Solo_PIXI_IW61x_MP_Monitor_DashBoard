@@ -7,14 +7,14 @@ and AI quality reports. Version 2.0 follows the layout and structure of the Solo
 
 | Page | What it shows |
 |---|---|
-| Dashboard | Yield by latest result (headline), first-pass and any-pass yield, units vs test runs, retests, items out of spec; yield trend, runs per hour, top failing steps, units per month |
+| Dashboard | Laid out as pixi-dashboard 3.2: PASS / FAIL / STOP doughnut, yield by latest result (headline) with first-pass and any-pass yield, units vs test runs, retests; yield trend, Hourly Output (07:00–19:00 of the latest day), units and FAIL / STOP per month (all work orders) |
 | Work Orders | One row per work order with the three yields, runs, runs without MAC, retest rate; AI report |
 | Fail List | FAIL / STOP runs, paged, searchable, raw-log download (signed in) |
 | Measurements | **Spec check**: every IW611 test item with limits, worst first (out of spec → Cpk → margin), click for its histogram with limit lines; BT, Wi-Fi and Other tabs |
 | Fail Analysis | Failing steps (runs, units, units passed on retest), categories, messages |
 | DB Maintenance | Browse / delete records, raw logs, background reparse (administrator) |
 | Data Alignment | Planned quantity per work order, aligned yield (administrator edits) |
-| Log Upload | Work-order zip or split run files → AI assistant (or form) → upload with progress → history / undo |
+| Log Upload (上傳 Log) | Uploaders get 中文 while signed in. Work-order zip or split run files → AI assistant (or form) → upload with progress → history / undo |
 | Accounts | Uploader accounts, account audit, sign-in log (administrator) |
 
 English by default with a one-click 中文 switch; Dark (default) and Light themes. The pre-2.0

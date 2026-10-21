@@ -1,8 +1,9 @@
-// Dashboard: the latest-result yield first, first-pass / any-pass beside it (Q1), units and
-// test runs kept apart, and four charts (Q2), from GET /api/overview.
+// Dashboard: the PASS / FAIL / STOP doughnut, the latest-result yield with first-pass / any-pass
+// below it (Q1), units and test runs kept apart, and four charts laid out as on pixi-dashboard 3.2
+// (yield trend, hourly output, units and FAIL / STOP per month), from GET /api/overview.
 import { apiGet } from '../core/api.js';
 import * as charts from '../core/charts.js';
-import { fmtInt, fmtPct, fmtShortDate, fmtTime, retryLevel, yieldLevel } from '../core/format.js';
+import { fmtDate, fmtInt, fmtPct, fmtShortDate, fmtTime, retryLevel, yieldLevel } from '../core/format.js';
 import { t } from '../core/i18n.js';
 import { queryString } from '../core/scope.js';
 import { $ } from '../core/ui.js';
@@ -12,11 +13,12 @@ let seq = 0;
 function setNumber(id, text, level) {
     const el = $(id);
     el.textContent = text;
+    el.classList.toggle('long', text.length > 5);
     el.classList.remove('v-good', 'v-warn', 'v-bad');
     if (level) el.classList.add(`v-${level}`);
 }
 
-function renderNumbers(s, aligned, spec) {
+function renderNumbers(s, aligned) {
     const latest = s.yield.latest;
     const hero = $('#ovYield');
     hero.innerHTML = '';
@@ -70,12 +72,30 @@ function renderNumbers(s, aligned, spec) {
     $('#ovStopSub').textContent = a.total ? t('ov.runs', { n: fmtInt(a.stop) }) : '';
     setNumber('#ovRetry', s.units ? fmtPct(s.retry_rate) : '—', s.units ? retryLevel(s.retry_rate) : '');
     $('#ovRetrySub').textContent = s.units ? t('ov.retrySub', { units: fmtInt(s.retry_units), recovered: fmtInt(s.recovered_units) }) : '';
+}
 
-    const st = spec.status;
-    const outOfSpec = st.fail || 0;
-    const weak = (st.bad || 0) + (st.warn || 0);
-    setNumber('#ovSpec', fmtInt(outOfSpec), outOfSpec ? 'bad' : weak ? 'warn' : 'good');
-    $('#ovSpecSub').textContent = t('ov.specSub', { weak: fmtInt(weak), ok: fmtInt(st.ok || 0) });
+// Small doughnut left of the yield: units by latest result. The legend shows percentages (the
+// counts are in the PASS / FAIL / STOP boxes), the tooltip both.
+function renderSplit(latest) {
+    const names = ['PASS', 'FAIL', 'STOP'];
+    const values = [latest.pass, latest.fail, latest.stop];
+    if (!values.some(Boolean)) { charts.chartMessage('chOvSplit', t('common.empty')); return; }
+    const total = values.reduce((a, b) => a + b, 0);
+    const pct = i => (values[i] * 100 / total).toFixed(2);
+    charts.render('chOvSplit', c => ({
+        type: 'doughnut',
+        data: {
+            labels: names.map((label, i) => t('ov.splitShort', { label, pct: pct(i) })),
+            datasets: [{ data: values, backgroundColor: [c.pass, c.fail, c.stop], borderWidth: 0 }],
+        },
+        options: {
+            cutout: '62%',
+            plugins: {
+                legend: { position: 'right', maxWidth: 160, labels: { boxWidth: 10, padding: 8 } },
+                tooltip: { callbacks: { label: ctx => t('ov.splitLabel', { label: names[ctx.dataIndex], n: fmtInt(values[ctx.dataIndex]), pct: pct(ctx.dataIndex) }) } },
+            },
+        },
+    }));
 }
 
 function renderTrend(trend) {
@@ -110,55 +130,66 @@ function renderTrend(trend) {
     }));
 }
 
-function renderHourly(hourly) {
-    const pts = hourly.points || [];
-    if (!pts.some(p => p.pass + p.fail + p.stop)) { charts.chartMessage('chOvHourly', t('common.empty')); $('#ovHourlyNote').textContent = ''; return; }
-    $('#ovHourlyNote').textContent = t('ov.hourlyNote', { hours: hourly.hours, to: `${fmtShortDate(pts[pts.length - 1].t)} ${fmtTime(pts[pts.length - 1].t)}` });
+const hourLabel = h => `${String(h).padStart(2, '0')}:00`;
+
+// Test runs per work hour on one day of one work order; the PASS part is the units produced.
+function renderHourly(h) {
+    const pts = h.points || [];
+    const passed = pts.reduce((a, p) => a + p.pass, 0);
+    if (!pts.some(p => p.pass + p.fail + p.stop)) {
+        $('#ovHourlyNote').textContent = '';
+        charts.chartMessage('chOvHourly', t('common.empty'));
+        return;
+    }
+    $('#ovHourlyNote').textContent =
+        t('ov.hourlyNote', { date: fmtDate(h.date), from: hourLabel(h.start), to: hourLabel(h.end), wo: h.work_order, pass: fmtInt(passed) })
+        + (h.outside ? t('ov.hourlyOutside', { n: fmtInt(h.outside) }) : '');
     charts.render('chOvHourly', c => ({
         type: 'bar',
         data: {
-            labels: pts.map(p => fmtTime(p.t)),
+            labels: pts.map(p => hourLabel(p.hour)),
             datasets: [
                 { label: 'PASS', data: pts.map(p => p.pass), backgroundColor: c.pass, stack: 'r', borderRadius: 2 },
                 { label: 'FAIL', data: pts.map(p => p.fail), backgroundColor: c.fail, stack: 'r', borderRadius: 2 },
                 { label: 'STOP', data: pts.map(p => p.stop), backgroundColor: c.stop, stack: 'r', borderRadius: 2 },
             ],
         },
-        options: { scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true, ticks: { precision: 0 },
-                                                         title: { display: true, text: t('ov.runsAxis') } } } },
-    }));
-}
-
-function renderSteps(steps) {
-    if (!steps.length) { charts.chartMessage('chOvSteps', t('ov.noFails')); return; }
-    charts.render('chOvSteps', c => ({
-        type: 'bar',
-        data: {
-            labels: steps.map(s => s.step),
-            datasets: [
-                { label: t('ov.stepRuns'), data: steps.map(s => s.attempts), backgroundColor: c.fail, borderRadius: 3 },
-                { label: t('ov.stepUnits'), data: steps.map(s => s.units), backgroundColor: c.stop, borderRadius: 3 },
-                { label: t('ov.stepRecovered'), data: steps.map(s => s.recovered_units), backgroundColor: c.pass, borderRadius: 3 },
-            ],
+        options: {
+            interaction: { mode: 'index', intersect: false },
+            scales: { x: { stacked: true },
+                      y: { stacked: true, beginAtZero: true, ticks: { precision: 0 }, title: { display: true, text: t('ov.runsAxis') } } },
         },
-        options: { indexAxis: 'y', scales: { x: { beginAtZero: true, ticks: { precision: 0 } },
-                                             y: { ticks: { autoSkip: false, font: { size: 12 } } } } },
     }));
 }
 
+// The whole year across all work orders: units by the month of their last test and their latest result.
 function renderMonthly(monthly) {
-    $('#ovMonthlyNote').textContent = monthly.year ? t('ov.yearNote', { year: monthly.year }) : '';
+    const note = monthly.year ? t('ov.yearAll', { year: monthly.year }) : '';
+    $('#ovMonthlyNote').textContent = note;
+    $('#ovMonthlyFailNote').textContent = note;
     const months = monthly.months || [];
-    if (!months.some(m => m.units)) { charts.chartMessage('chOvMonthly', t('common.empty')); return; }
+    if (!months.some(m => m.units)) {
+        charts.chartMessage('chOvMonthly', t('common.empty'));
+        charts.chartMessage('chOvMonthlyFail', t('common.empty'));
+        return;
+    }
+    const labels = months.map(m => t(`ov.m${m.month}`));
     charts.render('chOvMonthly', c => ({
         type: 'bar',
-        data: { labels: months.map(m => t(`ov.m${m.month}`)), datasets: [
+        data: { labels, datasets: [
             { label: 'PASS', data: months.map(m => m.pass), backgroundColor: c.pass, stack: 'u', borderRadius: 3 },
-            { label: 'FAIL', data: months.map(m => m.fail), backgroundColor: c.fail, stack: 'u', borderRadius: 3 },
-            { label: 'STOP', data: months.map(m => m.stop), backgroundColor: c.stop, stack: 'u', borderRadius: 3 },
+            { label: 'FAIL + STOP', data: months.map(m => m.fail + m.stop), backgroundColor: c.fail, stack: 'u', borderRadius: 3 },
         ] },
         options: { scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true, ticks: { precision: 0 },
                                                          title: { display: true, text: t('ov.unitsAxis') } } } },
+    }));
+    charts.render('chOvMonthlyFail', c => ({
+        type: 'bar',
+        data: { labels, datasets: [
+            { label: 'FAIL', data: months.map(m => m.fail), backgroundColor: c.fail, borderRadius: 3 },
+            { label: 'STOP', data: months.map(m => m.stop), backgroundColor: c.stop, borderRadius: 3 },
+        ] },
+        options: { scales: { y: { beginAtZero: true, ticks: { precision: 0 }, title: { display: true, text: t('ov.unitsAxis') } } } },
     }));
 }
 
@@ -167,21 +198,24 @@ async function load(app) {
     try {
         const data = await apiGet(`/api/overview${queryString(app.params())}`);
         if (mine !== seq) return;
-        renderNumbers(data.summary, data.aligned, data.spec);
+        renderNumbers(data.summary, data.aligned);
         if (!data.summary.units && !data.summary.attempts.total) {
-            ['chOvTrend', 'chOvHourly', 'chOvSteps'].forEach(id => charts.chartMessage(id, t('common.empty')));
+            ['chOvSplit', 'chOvTrend', 'chOvHourly'].forEach(id => charts.chartMessage(id, t('common.empty')));
+            $('#ovTrendNote').textContent = '';
+            $('#ovHourlyNote').textContent = '';
         } else {
+            renderSplit(data.summary.yield.latest);
             renderTrend(data.trend);
             renderHourly(data.hourly);
-            renderSteps(data.top_fail_steps);
         }
         renderMonthly(data.monthly);
     } catch (err) {
         if (mine !== seq) return;
-        ['#ovYield', '#ovUnits', '#ovPass', '#ovFail', '#ovStop', '#ovRetry', '#ovSpec'].forEach(id => { $(id).textContent = '—'; });
+        ['#ovYield', '#ovUnits', '#ovPass', '#ovFail', '#ovStop', '#ovRetry'].forEach(id => { $(id).textContent = '—'; });
         $('#ovViews').textContent = '';
         $('#ovAligned').textContent = err.message;
-        ['chOvTrend', 'chOvHourly', 'chOvSteps', 'chOvMonthly'].forEach((id, i) =>
+        ['#ovTrendNote', '#ovHourlyNote', '#ovMonthlyNote', '#ovMonthlyFailNote'].forEach(id => { $(id).textContent = ''; });
+        ['chOvTrend', 'chOvSplit', 'chOvHourly', 'chOvMonthly', 'chOvMonthlyFail'].forEach((id, i) =>
             charts.chartMessage(id, t('common.loadFailedMsg', { error: err.message }), 'error', i ? null : () => load(app)));
     }
 }

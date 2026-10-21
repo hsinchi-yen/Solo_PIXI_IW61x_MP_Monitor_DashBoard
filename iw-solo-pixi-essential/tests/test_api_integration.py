@@ -243,10 +243,27 @@ class ApiIntegrationTests(unittest.TestCase):
         d = self.client.get("/api/overview?latest=true").json()
         self.assertEqual(d["scope"]["params"], {"work_order": WO})
         self.assertEqual(d["summary"]["units"], 120)
-        self.assertEqual(d["top_fail_steps"][0]["step"], "(STOP)")
-        self.assertEqual(d["top_fail_steps"][1]["step"], "SAVE_NVRAM")
-        self.assertEqual(d["top_fail_steps"][1]["attempts"], 13)
-        self.assertEqual(sum(p["pass"] + p["fail"] + p["stop"] for p in d["hourly"]["points"]) <= 180, True)
+        self.assertNotIn("spec", d)                       # Out of Spec left the dashboard (pixi-dashboard layout)
+        self.assertEqual(set(d["monthly"]), {"year", "months"})
+        steps = self.client.get("/api/fail-analysis").json()["top_steps"]
+        self.assertEqual((steps[0]["step"], steps[1]["step"], steps[1]["attempts"]), ("(STOP)", "SAVE_NVRAM", 13))
+
+    def test_hourly_output_is_the_latest_work_day(self):
+        h = self.client.get("/api/overview").json()["hourly"]
+        self.assertEqual(h["work_order"], WO)                # no work order chosen: the latest one
+        self.assertEqual((h["start"], h["end"]), (7, 19))
+        self.assertEqual([p["hour"] for p in h["points"]], list(range(7, 19)))
+        day = self._scalar("SELECT MAX(start_time::date) FROM test_results WHERE work_order = %s "
+                           "AND start_time::time >= '07:00' AND start_time::time < '19:00'", (WO,))
+        self.assertEqual(h["date"], day.isoformat())
+        runs = self._scalar("SELECT COUNT(*) FROM test_results WHERE work_order = %s AND start_time::date = %s", (WO, day))
+        self.assertEqual(sum(p["pass"] + p["fail"] + p["stop"] for p in h["points"]) + h["outside"], runs)
+        passed = self._scalar("SELECT COUNT(*) FROM test_results WHERE work_order = %s AND start_time::date = %s "
+                              "AND result = 'PASS' AND start_time::time >= '07:00' AND start_time::time < '19:00'", (WO, day))
+        self.assertEqual(sum(p["pass"] for p in h["points"]), passed)
+        self.assertEqual(self.client.get(f"/api/hourly-output?work_order={WO}").json(), h)
+        empty = self.client.get("/api/hourly-output?date_from=2020-01-01&date_to=2020-01-02").json()
+        self.assertEqual((empty["date"], empty["points"]), (None, []))
 
     def test_date_filters_and_iso_week(self):
         self.assertEqual(self.client.get("/api/summary?date_from=2026-07-21&date_to=2026-07-21").json()["attempts"]["total"]

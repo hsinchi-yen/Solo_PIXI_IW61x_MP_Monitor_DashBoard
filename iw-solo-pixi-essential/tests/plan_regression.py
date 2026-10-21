@@ -25,6 +25,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -145,6 +146,18 @@ def run(args):
     trend = http.json("/api/trend")["points"]
     check("B6", "Yield trend has the three yields per point",
           bool(trend) and all({"latest", "first_pass", "any_pass"} <= set(p) for p in trend), trend[:1])
+
+    # 2.1: dashboard laid out as pixi-dashboard 3.2 (doughnut, Hourly Output, two monthly charts)
+    ov = http.json("/api/overview?latest=true")
+    ho = ov["hourly"]
+    check("V1", "Hourly Output: 07:00–18:00 of one day of the latest work order",
+          [p["hour"] for p in ho["points"]] == list(range(7, 19)) and ho["date"] is not None
+          and ho["work_order"] == ov["scope"]["params"].get("work_order"), {k: ho[k] for k in ("work_order", "date", "outside")})
+    check("V1", "/api/hourly-output gives the same as the dashboard",
+          http.json("/api/hourly-output?work_order=" + urllib.parse.quote(ho["work_order"] or "")) == ho)
+    months = ov["monthly"]["months"]
+    check("V1", "Monthly charts cover all work orders (12 months, PASS / FAIL / STOP)",
+          len(months) == 12 and all({"pass", "fail", "stop"} <= set(m) for m in months) and "spec" not in ov)
 
     same = all(http.json(p) == http.json(p) for p in ("/api/measurements/items?limit=2000", "/api/fail-analysis",
                                                        "/api/retries?limit=1000"))

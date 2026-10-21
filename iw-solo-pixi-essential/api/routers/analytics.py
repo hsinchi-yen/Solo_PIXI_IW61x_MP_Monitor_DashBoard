@@ -37,7 +37,10 @@ def filter_options():
 
 @router.get("/overview")
 def overview(scope: Scope = Depends(scope_params), latest: bool = Query(False, description="use the latest work order")):
-    """Everything the Dashboard page shows, in one request (decisions Q1–Q3)."""
+    """Everything the Dashboard page shows, in one request (decisions Q1–Q3; layout of pixi-dashboard 3.2).
+
+    Numbers, trend and hourly output follow the selected scope. The two monthly charts show the
+    whole year of that scope across all work orders, for context."""
     with db.db() as conn:
         if latest and scope.is_empty:
             wo = stats.latest_work_order(conn)
@@ -54,10 +57,8 @@ def _overview(conn, scope):
         "aligned": {"yield_pct": align["totals"]["aligned_yield"], "gap": align["totals"]["gap"],
                     "has_target": any(r["target_total"] is not None for r in align["items"])},
         "trend": stats.trend(conn, scope),
-        "hourly": stats.hourly(conn, scope),
-        "top_fail_steps": stats.top_fail_steps(conn, scope, 5),
-        "monthly": stats.monthly(conn, Scope(work_order=scope.work_order), year) if year else {"year": None, "months": []},
-        "spec": {"status": measurements.status_counts(measurements.spec_items(conn, scope))},
+        "hourly": stats.hourly_output(conn, scope),
+        "monthly": stats.monthly(conn, Scope(), year) if year else {"year": None, "months": []},
         "data_as_of": stats.refreshed_at(conn),
     }
 
@@ -78,6 +79,13 @@ def trend(scope: Scope = Depends(scope_params)):
 def hourly(scope: Scope = Depends(scope_params), hours: int = Query(24, ge=1, le=168)):
     with db.db() as conn:
         return stats.hourly(conn, scope, hours)
+
+
+@router.get("/hourly-output")
+def hourly_output(scope: Scope = Depends(scope_params)):
+    """Test runs per work hour (config.WORK_HOURS) on the latest day of the selected or latest work order."""
+    with db.db() as conn:
+        return stats.cached(conn, ("hourly_output", scope), lambda: stats.hourly_output(conn, scope))
 
 
 @router.get("/monthly-count")

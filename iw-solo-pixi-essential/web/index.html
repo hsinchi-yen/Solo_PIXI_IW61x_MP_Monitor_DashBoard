@@ -98,6 +98,7 @@
     <!-- ─── Dashboard (Q1–Q3) ─── -->
     <section class="page" id="page-overview" hidden>
         <div class="ov-numbers">
+            <div class="ov-split"><div class="label" data-i18n="ov.split"></div><div class="chart-box"><canvas id="chOvSplit"></canvas></div></div>
             <div class="ov-hero">
                 <div class="label" data-i18n="ov.yield"></div>
                 <div class="value" id="ovYield">—</div>
@@ -109,13 +110,12 @@
             <div class="ov-num"><div class="label" data-i18n="ov.fail"></div><div class="value v-fail" id="ovFail">—</div><div class="sub" id="ovFailSub"></div></div>
             <div class="ov-num"><div class="label" data-i18n="ov.stop"></div><div class="value v-stop" id="ovStop">—</div><div class="sub" id="ovStopSub"></div></div>
             <div class="ov-num"><div class="label" data-i18n="ov.retry"></div><div class="value" id="ovRetry">—</div><div class="sub" id="ovRetrySub"></div></div>
-            <div class="ov-num"><div class="label" data-i18n="ov.spec"></div><div class="value" id="ovSpec">—</div><div class="sub" id="ovSpecSub"></div></div>
         </div>
         <div class="ov-charts">
             <div class="card"><div class="card-head"><div class="card-title" data-i18n="ov.trend"></div><div class="card-note" id="ovTrendNote"></div></div><div class="chart-box"><canvas id="chOvTrend"></canvas></div></div>
             <div class="card"><div class="card-head"><div class="card-title" data-i18n="ov.hourly"></div><div class="card-note" id="ovHourlyNote"></div></div><div class="chart-box"><canvas id="chOvHourly"></canvas></div></div>
-            <div class="card"><div class="card-head"><div class="card-title" data-i18n="ov.topSteps"></div><div class="card-note" data-i18n="ov.topStepsNote"></div></div><div class="chart-box"><canvas id="chOvSteps"></canvas></div></div>
             <div class="card"><div class="card-head"><div class="card-title" data-i18n="ov.monthly"></div><div class="card-note" id="ovMonthlyNote"></div></div><div class="chart-box"><canvas id="chOvMonthly"></canvas></div></div>
+            <div class="card"><div class="card-head"><div class="card-title" data-i18n="ov.monthlyFail"></div><div class="card-note" id="ovMonthlyFailNote"></div></div><div class="chart-box"><canvas id="chOvMonthlyFail"></canvas></div></div>
         </div>
     </section>
 

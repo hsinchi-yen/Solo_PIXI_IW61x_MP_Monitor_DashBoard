@@ -4,7 +4,7 @@ import os
 
 log = logging.getLogger("iw.config")
 
-APP_VERSION = os.environ.get("APP_VERSION", "2.0.0")
+APP_VERSION = os.environ.get("APP_VERSION", "2.1.0")
 APP_TZ = os.environ.get("APP_TZ", "Asia/Taipei")
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://pixi:pixipass@localhost:5434/pixi_test")
@@ -34,6 +34,10 @@ LLM_STATUS_PROBE_SEC = 60
 # Statistics materialized views: refreshed on this interval and right after web uploads,
 # undo and DB Tweak deletes. Desktop uploads show up within one interval.
 STATS_REFRESH_SEC = int(os.environ.get("STATS_REFRESH_SEC", "300"))
+
+# Line work hours [start, end) for the dashboard's Hourly Output chart (local wall-clock hours),
+# the same as pixi-dashboard.
+WORK_HOURS = (7, 19)
 
 # AI reports: generated after each web upload and in a daily batch at this local time.
 REPORT_DAILY_AT = os.environ.get("REPORT_DAILY_AT", "18:00")
