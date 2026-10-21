@@ -92,6 +92,8 @@ def run(args):
     att = s["attempts"]
     acceptance = any(w["work_order"] == ACCEPTANCE_WO and w["attempts"] == 180
                      for w in http.json("/api/filter-options")["work_orders"])
+    # The acceptance numbers are checked inside that work order, so other work orders on the server do not matter.
+    acc_q = "?work_order=" + ACCEPTANCE_WO
 
     # ── 數字 (B1–B7) ──────────────────────────────────────────────────────────
     pages, items, page = None, [], 1
@@ -113,12 +115,14 @@ def run(args):
     check("B2", "Three yields over the same units (latest / first-pass / any-pass)", sums_ok and order_ok, y)
     check("B2", "Runs kept apart from units (PASS+FAIL+STOP = runs)", att["pass"] + att["fail"] + att["stop"] == att["total"], att)
     if acceptance:
-        got = (s["units"], y["latest"]["yield_pct"], y["first_pass"]["yield_pct"], y["any_pass"]["yield_pct"],
-               att["total"], att["pass"], att["fail"], att["stop"], att["unknown_mac"])
+        sa = http.json("/api/summary" + acc_q)
+        ya, aa = sa["yield"], sa["attempts"]
+        got = (sa["units"], ya["latest"]["yield_pct"], ya["first_pass"]["yield_pct"], ya["any_pass"]["yield_pct"],
+               aa["total"], aa["pass"], aa["fail"], aa["stop"], aa["unknown_mac"])
         check("B2", "Acceptance numbers 120 / 99.17 / 72.5 / 99.17 / 180 / 121 / 13 / 46 / 7",
               got == (120, 99.17, 72.5, 99.17, 180, 121, 13, 46, 7), got)
 
-    fa = http.json("/api/fail-analysis")
+    fa = http.json("/api/fail-analysis" + (acc_q if acceptance else ""))
     nv = next((st for st in fa["top_steps"] if st["step"] == "SAVE_NVRAM"), None)
     check("B3", "Fail steps report runs and units separately (SAVE_NVRAM)",
           nv is not None and "attempts" in nv and "units" in nv and (not acceptance or (nv["attempts"], nv["units"]) == (13, 11)),
@@ -129,9 +133,11 @@ def run(args):
     check("B4", "BT BER reported at the IW611 channels 2403 / 2478 MHz",
           all(f in ber and ber[f]["n"] > 0 and ber[f]["mean"] is not None for f in (2403, 2478)), sorted(ber))
     bdr = next((r for r in m["bt"]["tx"] if r["standard"] == "BDR" and r.get("power")), None)
+    acc_bdr = acceptance and next((r for r in http.json("/api/measurements" + acc_q)["bt"]["tx"]
+                                   if r["standard"] == "BDR" and r.get("power")), None)
     check("B5", "BDR power counted once per run (n ≤ runs" + (", = 136 on the acceptance data)" if acceptance else ")"),
-          bdr is not None and bdr["power"]["n"] <= att["total"] and (not acceptance or bdr["power"]["n"] == 136),
-          bdr and bdr["power"]["n"])
+          bdr is not None and bdr["power"]["n"] <= att["total"] and (not acceptance or (acc_bdr and acc_bdr["power"]["n"] == 136)),
+          (bdr and bdr["power"]["n"], acc_bdr and acc_bdr["power"]["n"]))
     labels = [(r["standard"], r["rate"], r["band"]) for r in m["wifi"]["tx"] + m["wifi"]["rx"]
               if str(r.get("rate", "")).startswith(("CCK", "OFDM"))]
     expect = lambda rate, band: "11b" if rate.startswith("CCK") else ("11g" if band == "2.4GHz" else "11a")
@@ -364,7 +370,7 @@ def run(args):
               rep.get("status") == "done" and all(checks_.get(l, {}).get("ok") for l in ("en", "zh")), checks_)
         facts = rep.get("facts") or {}
         check("C1", "Facts carry the three yields, units and runs",
-              "120" in json.dumps(facts) if acceptance else bool(facts), list(facts)[:8])
+              "120" in json.dumps(facts) if acceptance and wo == ACCEPTANCE_WO else bool(facts), list(facts)[:8])
         check("C2", "Generation time (both languages)", elapsed < 120, f"{elapsed:.0f} s (plan target 30 s; Q27 accepts ≈ 55 s)")
         st, text = http.call("POST", f"/api/reports/{wo}/generate?force=false")
         check("R4", "Unchanged data reuses the stored report", any(e.get("type") == "cached" for e in ndjson(text)),
@@ -379,7 +385,7 @@ def run(args):
                                    "lang": "en"})
         reply = next((e.get("reply") for e in ndjson(text if isinstance(text, str) else "") if e.get("type") == "done"), "")
         check("C3", "Follow-up question answered from the facts",
-              bool(reply) and (not acceptance or ("SAVE_NVRAM" in reply and "13" in reply)), reply[:160])
+              bool(reply) and (not (acceptance and wo == ACCEPTANCE_WO) or ("SAVE_NVRAM" in reply and "13" in reply)), reply[:160])
     else:
         check("C1", "AI report checks (needs --llm)", None)
 
