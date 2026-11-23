@@ -40,7 +40,7 @@ COMPOSE_PROJECT_NAME=iw-rehearsal scripts/deploy.sh --local <目錄> --delete
   ```
   LLM_ENABLED=true
   LLM_API_BASE=http://10.20.30.23:8000/v1
-  LLM_MODEL=Qwen3.8-27B-UD-Q6_K_L
+  LLM_MODEL=Qwen3.8-27B-FP8
   ```
   其他設定見 `.env.example`，全部都有預設值。`ADMIN_PASS` 目前沿用預設（負責人決定）。
 - API 啟動時會自動建立新物件（帳號、上傳紀錄、AI 報告、統計 view 與 `metric_day`）。**既有資料表、欄位、索引都不改**；目前 180 筆約 2 秒。
@@ -91,3 +91,4 @@ bash system_up.sh
 | 2026-10-20 17:15 | 2.0.0（`c799d56`，看板同時由 8003 提供） | `oldbackup/261020/files_171530.tgz`、`pixi_test_20261020_171530.dump` | 8003／8004 首頁正常；計畫項目檢查（唯讀）兩個 port 各 35 項通過；28 次頁面載入無錯誤；AI 已連線 |
 | 2026-10-20 18:14 | 2.0.0（`5117746`，單一 port 8003，8004 停用；舊書籤轉址） | `oldbackup/261020/files_181403.tgz`、`pixi_test_20261020_181403.dump` | 只剩 8003／5434 在聽；計畫項目檢查（唯讀）36 項通過；14 次頁面載入無錯誤；舊書籤轉址正常；AI 已連線 |
 | 2026-10-21 12:58 | 2.1.0（`bfbaeae`，儀表板對齊 pixi-dashboard 3.2：圓餅圖、每小時產出、每月兩張圖；上傳者自動中文） | `oldbackup/261021/files_125816.tgz`、`pixi_test_20261021_125816.dump` | 約 40 秒；資料庫結構不變；計畫項目檢查（唯讀）39 項通過、0 失敗；中英 7 頁 14 次載入無錯誤；7 格一列、1920×1080 不捲動；8004 無回應；AI 已連線 |
+| 2026-11-23 18:11 | 2.1.0＋LLM 相容修正（LLM 主機改為 vLLM；`llm.py` 同時支援 vLLM／llama.cpp；`.env` `LLM_MODEL=Qwen3.8-27B-FP8`） | `oldbackup/vllm-model-20261123/`（`.env`、compose、`config.py`、`llm.py`、`reports.py` 原檔）；舊 image `iw-solo-pixi-essential-api:pre-vllm` | 只重建 API 容器（約 9 秒）；port 8003／5434 不變；部署前在伺服器以暫存 image 測試；10 分鐘唯讀冒煙測試（18:19–18:29）：22 輪 418 次請求（首頁、`/health`、16 個看板 API）0 失敗、最慢 222 ms；AI 擷取＋串流 11/11 通過；容器全程 healthy、0 次重啟；全部 16 個資料表筆數前後一致；API 日誌無錯誤 |

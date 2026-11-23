@@ -53,4 +53,4 @@ cd iw-solo-pixi-essential
 run.cmd
 ```
 
-Then open `http://localhost:8004`.
+Then open `http://localhost:8003` (production: `http://10.20.31.40:8003`).

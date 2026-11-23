@@ -19,12 +19,14 @@ SESSION_TTL_HOURS = float(os.environ.get("SESSION_TTL_HOURS", "8"))
 # Browser origins allowed to call the API directly (comma separated). Empty: same origin only.
 CORS_ORIGINS = [o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
 
-# Local LLM (llama.cpp, OpenAI-compatible). Off unless LLM_ENABLED=true and LLM_API_BASE are set
-# (decision Q13); production turns it on in its .env. Thinking off: much faster on the dense 27B.
+# Local LLM: any OpenAI-compatible server (vLLM or llama.cpp). Off unless LLM_ENABLED=true and
+# LLM_API_BASE are set (decision Q13); production turns it on in its .env. Thinking off: much faster.
+# LLM_MODEL is the preferred model id; when the server does not serve it (or it is empty / "auto"),
+# the client uses the first id from GET /models, so a renamed model does not break the AI features.
 LLM_ENABLED = os.environ.get("LLM_ENABLED", "false").lower() == "true"
 LLM_API_BASE = os.environ.get("LLM_API_BASE", "").rstrip("/")
 LLM_API_KEY = os.environ.get("LLM_API_KEY", "")
-LLM_MODEL = os.environ.get("LLM_MODEL", "Qwen3.8-27B-UD-Q6_K_L")
+LLM_MODEL = os.environ.get("LLM_MODEL", "Qwen3.8-27B-FP8").strip()
 LLM_ENABLE_THINKING = os.environ.get("LLM_ENABLE_THINKING", "false").lower() == "true"
 LLM_REPORT_MAX_TOKENS = int(os.environ.get("LLM_REPORT_MAX_TOKENS", "1536"))
 LLM_CHAT_TIMEOUT = 60          # seconds per call; the uploader falls back to the form on timeout

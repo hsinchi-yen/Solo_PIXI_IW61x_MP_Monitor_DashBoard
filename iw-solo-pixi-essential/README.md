@@ -113,8 +113,12 @@ header, valid for `SESSION_TTL_HOURS`. **Set `ADMIN_PASS` in `.env` on any share
 
 ## AI
 
-Off unless `.env` sets `LLM_ENABLED=true` and `LLM_API_BASE` (OpenAI-compatible, e.g. a local
-llama.cpp server); `LLM_MODEL` defaults to `Qwen3.8-27B-UD-Q6_K_L`, thinking off.
+Off unless `.env` sets `LLM_ENABLED=true` and `LLM_API_BASE` (any OpenAI-compatible server:
+vLLM or llama.cpp); `LLM_MODEL` defaults to `Qwen3.8-27B-FP8`, thinking off. If the server does
+not serve `LLM_MODEL` (or it is `auto`), the first id from `GET /models` is used, and a 404 after a
+rename re-resolves it. Reasoning output (vLLM `reasoning`, llama.cpp `<think>`) is dropped, and
+servers without `json_schema` support get `json_object`. `/api/llm-status` shows the model in use
+and the backend.
 
 - **Upload assistant** — extracts the work order (regex) and planned quantity (LLM, JSON
   schema), then explains the rule results in the UI language.
